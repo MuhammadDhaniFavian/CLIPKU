@@ -26,6 +26,8 @@ backend/output/
 tools/
 
 # Video & model files
+backend/models/*
+!backend/models/.gitkeep
 *.mp4
 *.mov
 *.mkv
@@ -34,4 +36,5 @@ tools/
 *.bin
 *.pt
 *.onnx
+
 

@@ -13,8 +13,9 @@ import uuid
 from pathlib import Path
 from typing import Dict, Optional, List
 from app.core.config import TEMP_DIR, OUTPUT_DIR
-from app.schemas.video import JobStatus, JobInfo, ClipRange, ClipInfo
+from app.schemas.video import JobStatus, JobInfo, ClipRange, ClipInfo, TranscriptionResult
 from app.services.ffmpeg_service import FFmpegService
+from app.services.whisper_service import whisper_service
 
 
 class JobManager:
@@ -168,7 +169,121 @@ class JobManager:
             finally:
                 self.active_processes.pop(job_id, None)
 
+    async def run_transcribe_job(
+        self,
+        job_id: str,
+        video_id: str,
+        video_path: Path,
+        language: Optional[str] = None,
+        model_name: Optional[str] = None
+    ):
+        """
+        Menjalankan proses transkripsi AI Whisper lokal di antrean job.
+        1. Ekstraksi audio 16kHz mono WAV dari video via FFmpeg
+        2. Analisis ucapan dan timestamp per kata via Faster-Whisper
+        3. Simpan hasil transkripsi ke JSON lokal untuk caching
+        4. Pembersihan otomatis file WAV sementara
+        """
+        job = self.jobs.get(job_id)
+        if not job:
+            return
+
+        async with self.lock:
+            if job.status == JobStatus.CANCELLED:
+                return
+
+            job.status = JobStatus.RUNNING
+            job.message = "Mengekstrak audio 16kHz dari video..."
+            job.progress = 5
+
+            # File audio sementara untuk Whisper
+            temp_audio_path = TEMP_DIR / f"{video_id}_audio_16k.wav"
+            self.created_files[job_id].append(temp_audio_path)
+
+            try:
+                def register_proc(p):
+                    self.active_processes[job_id] = p
+
+                # 1. Ekstrak audio via FFmpeg
+                await FFmpegService.extract_audio_for_whisper(
+                    video_path=video_path,
+                    output_audio_path=temp_audio_path,
+                    register_process=register_proc
+                )
+
+                self.active_processes.pop(job_id, None)
+
+                if job.status == JobStatus.CANCELLED:
+                    self._cleanup_job_files(job_id)
+                    return
+
+                job.progress = 25
+                job.message = "Memuat model AI Whisper dan menganalisis ucapan..."
+
+                # 2. Jalankan transkripsi di thread terpisah (karena Faster-Whisper CPU/GPU sync)
+                loop = asyncio.get_running_loop()
+
+                def progress_cb(pct: int, msg: str):
+                    if job.status != JobStatus.CANCELLED:
+                        job.progress = pct
+                        job.message = msg
+
+                detected_lang, lang_prob, duration, segments, full_text = await loop.run_in_executor(
+                    None,
+                    lambda: whisper_service.transcribe_file_sync(
+                        audio_path=temp_audio_path,
+                        language=language,
+                        model_name=model_name,
+                        progress_callback=progress_cb
+                    )
+                )
+
+                if job.status == JobStatus.CANCELLED:
+                    self._cleanup_job_files(job_id)
+                    return
+
+                # 3. Bentuk hasil transkripsi
+                result = TranscriptionResult(
+                    video_id=video_id,
+                    language=detected_lang,
+                    language_probability=lang_prob,
+                    duration=duration,
+                    segments=segments,
+                    full_text=full_text
+                )
+
+                # Simpan metadata transkrip ke JSON file (untuk cache dan endpoint transcript)
+                transcript_cache_file = TEMP_DIR / f"{video_id}_transcript.json"
+                import json
+                with open(transcript_cache_file, "w", encoding="utf-8") as f:
+                    f.write(result.model_dump_json(indent=2))
+
+                # 4. Hapus audio WAV sementara (hemat ruang disk)
+                if temp_audio_path.exists():
+                    temp_audio_path.unlink()
+
+                job.status = JobStatus.COMPLETED
+                job.progress = 100
+                job.transcription = result
+                job.message = f"Transkripsi selesai! Terdeteksi: '{detected_lang.upper()}' ({len(segments)} segmen ucapan)"
+
+            except Exception as e:
+                if job.status != JobStatus.CANCELLED:
+                    job.status = JobStatus.FAILED
+                    job.error = str(e)
+                    job.message = f"Gagal mentranskripsi video: {str(e)}"
+                    self._cleanup_job_files(job_id)
+            finally:
+                self.active_processes.pop(job_id, None)
+                # Pastikan file audio WAV dihapus
+                if temp_audio_path.exists():
+                    try:
+                        temp_audio_path.unlink()
+                    except Exception:
+                        pass
+
 
 # Singleton job manager instance
+
 job_manager = JobManager()
 

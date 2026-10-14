@@ -146,3 +146,43 @@ class FFmpegService:
             err_msg = stderr.decode(errors="replace")
             raise RuntimeError(f"FFmpeg gagal memotong klip: {err_msg}")
 
+    @classmethod
+    async def extract_audio_for_whisper(
+        cls,
+        video_path: Path,
+        output_audio_path: Path,
+        register_process: Optional[Callable[[asyncio.subprocess.Process], None]] = None
+    ) -> None:
+        """
+        Mengekstrak audio dari video ke format WAV 16kHz mono 16-bit PCM.
+        Ini adalah format audio standar dan paling optimal untuk model Faster-Whisper.
+        """
+        if not video_path.exists():
+            raise FileNotFoundError(f"File video tidak ditemukan: {video_path.name}")
+
+        cmd = [
+            str(FFMPEG_PATH),
+            "-y",
+            "-i", str(video_path),
+            "-vn",                       # Tanpa stream video
+            "-acodec", "pcm_s16le",       # 16-bit PCM
+            "-ar", "16000",              # Sample rate 16000 Hz
+            "-ac", "1",                  # Mono channel
+            str(output_audio_path)
+        ]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        if register_process:
+            register_process(proc)
+
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            err_msg = stderr.decode(errors="replace")
+            raise RuntimeError(f"FFmpeg gagal mengekstrak audio: {err_msg}")
+

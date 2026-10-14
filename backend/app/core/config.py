@@ -55,3 +55,12 @@ MAX_CLIP_DURATION = 300  # 5 menit
 # Hanya 1 job berat berjalan pada satu waktu
 MAX_CONCURRENT_JOBS = 1
 
+# === AI Whisper Transkripsi Lokal ===
+MODELS_DIR = BACKEND_DIR / "models"
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Ukuran model default: "tiny" untuk uji coba cepat, "base" atau "small" untuk akurasi tinggi
+DEFAULT_WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny")
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "auto")  # auto / cuda / cpu
+WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "auto")  # auto / float16 / int8
+

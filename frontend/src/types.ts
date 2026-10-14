@@ -25,6 +25,30 @@ export interface ClipInfo {
   file_size_mb: number;
 }
 
+export interface WordTimestamp {
+  word: string;
+  start: number;
+  end: number;
+  probability: number;
+}
+
+export interface TranscriptSegment {
+  id: number;
+  start: number;
+  end: number;
+  text: string;
+  words: WordTimestamp[];
+}
+
+export interface TranscriptionResult {
+  video_id: string;
+  language: string;
+  language_probability: number;
+  duration: number;
+  segments: TranscriptSegment[];
+  full_text: string;
+}
+
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface JobInfo {
@@ -33,6 +57,7 @@ export interface JobInfo {
   progress: number;
   message: string;
   result?: ClipInfo[];
+  transcription?: TranscriptionResult;
   error?: string;
 }
 
@@ -42,4 +67,3 @@ export interface AppConfig {
   disk_reserve_margin_gb?: number;
   free_disk_gb?: number;
 }
-

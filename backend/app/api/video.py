@@ -12,6 +12,7 @@ import os
 import shutil
 import uuid
 from pathlib import Path
+from typing import Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Request
 from fastapi.responses import FileResponse
 import aiofiles
@@ -30,7 +31,9 @@ from app.schemas.video import (
     CutRequest,
     JobInfo,
     ClipRange,
-    AutoSplitRequest
+    AutoSplitRequest,
+    TranscribeRequest,
+    TranscriptionResult
 )
 from app.services.ffmpeg_service import FFmpegService
 from app.services.job_manager import job_manager
@@ -286,4 +289,67 @@ async def get_clip_file(clip_filename: str):
         filename=safe_filename,
         headers={"Accept-Ranges": "bytes"}
     )
+
+
+@router.post("/video/{video_id}/transcribe")
+async def start_transcription(video_id: str, req: Optional[TranscribeRequest] = None):
+    """
+    Mendaftarkan job transkripsi ucapan lokal (Faster-Whisper) ke antrean background job.
+    """
+    video_path = get_safe_video_path(video_id)
+    language = req.language if req else None
+    model_size = req.model_size if req else None
+
+    job_id = job_manager.create_job()
+
+    asyncio.create_task(
+        job_manager.run_transcribe_job(
+            job_id=job_id,
+            video_id=video_id,
+            video_path=video_path,
+            language=language,
+            model_name=model_size
+        )
+    )
+
+    return {
+        "job_id": job_id,
+        "message": "Job transkripsi AI Whisper berhasil didaftarkan"
+    }
+
+
+@router.get("/video/{video_id}/transcript", response_model=TranscriptionResult)
+async def get_video_transcript(video_id: str):
+    """
+    Mengambil hasil transkripsi ucapan (kalimat dan kata dengan timestamp)
+    yang tersimpan dari video.
+    """
+    transcript_file = TEMP_DIR / f"{video_id}_transcript.json"
+    if not transcript_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Transkrip belum tersedia untuk video ini. Jalankan proses transkripsi terlebih dahulu."
+        )
+
+    import json
+    with open(transcript_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    return TranscriptionResult(**data)
+
+
+@router.get("/video/{video_id}/stream")
+async def stream_source_video(video_id: str):
+    """
+    Streaming video asli yang diunggah untuk pemutar video di browser.
+    Mendukung header Accept-Ranges untuk seeking lancar.
+    """
+    video_path = get_safe_video_path(video_id)
+    return FileResponse(
+        path=video_path,
+        media_type="video/mp4",
+        filename=video_path.name,
+        headers={"Accept-Ranges": "bytes"}
+    )
+
 

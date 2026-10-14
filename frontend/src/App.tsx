@@ -9,9 +9,22 @@ import {
   Plus,
   Trash2,
   HardDrive,
-  StopCircle
+  StopCircle,
+  Mic,
+  Play,
+  Search,
+  Sparkles
 } from 'lucide-react';
-import type { VideoMetadata, ClipRange, ClipInfo, JobInfo, AppConfig } from './types';
+
+import type {
+  VideoMetadata,
+  ClipRange,
+  ClipInfo,
+  JobInfo,
+  AppConfig,
+  TranscriptionResult,
+  TranscriptSegment
+} from './types';
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig>({
@@ -27,6 +40,13 @@ export default function App() {
     return `${mb} MB`;
   };
 
+  const formatSeconds = (sec: number) => {
+    const totalSec = Math.floor(sec);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
   const maxUploadDisplay = formatSizeDisplay(config.max_upload_size_mb);
 
   // State Video
@@ -37,16 +57,24 @@ export default function App() {
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // State Transkripsi AI Whisper
+  const [transcription, setTranscription] = useState<TranscriptionResult | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('auto');
+  const [selectedModel, setSelectedModel] = useState<string>('tiny');
+  const [transcriptFilter, setTranscriptFilter] = useState<string>('');
+
   // State Klip
   const [clips, setClips] = useState<ClipRange[]>([]);
   const [splitDuration, setSplitDuration] = useState<number>(30);
 
   // State Job
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobType, setActiveJobType] = useState<'transcribe' | 'cut' | null>(null);
   const [jobInfo, setJobInfo] = useState<JobInfo | null>(null);
   const [completedClips, setCompletedClips] = useState<ClipInfo[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoPlayerRef = useRef<HTMLVideoElement>(null);
   const pollTimerRef = useRef<number | null>(null);
 
   // Muat konfigurasi server saat pertama kali dibuka
@@ -69,10 +97,17 @@ export default function App() {
         setJobInfo(data);
 
         if (data.status === 'completed') {
-          if (data.result) setCompletedClips(data.result);
+          if (data.transcription) {
+            setTranscription(data.transcription);
+          }
+          if (data.result) {
+            setCompletedClips(data.result);
+          }
           setActiveJobId(null);
+          setActiveJobType(null);
         } else if (data.status === 'failed' || data.status === 'cancelled') {
           setActiveJobId(null);
+          setActiveJobType(null);
         }
       } catch (err) {
         console.error('Polling error:', err);
@@ -119,6 +154,7 @@ export default function App() {
     setErrorMessage(null);
     setVideoFile(file);
     setMetadata(null);
+    setTranscription(null);
     setCompletedClips([]);
     setJobInfo(null);
     setClips([]);
@@ -146,7 +182,7 @@ export default function App() {
       setMetadata(data.metadata);
       setUploadProgress(100);
 
-      // Inisialisasi awal 3 klip otomatis
+      // Inisialisasi awal 3 klip default
       generateDefaultClips(data.metadata.duration_seconds, 30);
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan saat upload.');
@@ -161,7 +197,6 @@ export default function App() {
     let start = 0;
     let idx = 1;
 
-    // Ambil maksimal 4 klip default
     while (start < duration && newClips.length < 4) {
       const end = Math.min(start + clipDur, duration);
       if (end - start < 5 && newClips.length > 0) break;
@@ -180,6 +215,62 @@ export default function App() {
     if (!metadata) return;
     setSplitDuration(dur);
     generateDefaultClips(metadata.duration_seconds, dur);
+  };
+
+  // Handler Mulai Transkripsi AI Whisper
+  const handleStartTranscribe = async () => {
+    if (!videoId) return;
+    setErrorMessage(null);
+
+    try {
+      const res = await fetch(`/api/video/${videoId}/transcribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          video_id: videoId,
+          language: selectedLanguage === 'auto' ? null : selectedLanguage,
+          model_size: selectedModel
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Gagal memulai proses transkripsi.');
+      }
+
+      const data = await res.json();
+      setActiveJobId(data.job_id);
+      setActiveJobType('transcribe');
+      setJobInfo({
+        job_id: data.job_id,
+        status: 'queued',
+        progress: 0,
+        message: 'Job transkripsi terdaftar dalam antrean...',
+      });
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Gagal memulai transkripsi.');
+    }
+  };
+
+  // Tambahkan satu segmen transkripsi ke daftar klip
+  const handleAddSegmentToClips = (seg: TranscriptSegment) => {
+    const cleanTitle = seg.text.length > 30 ? seg.text.slice(0, 30) + '...' : seg.text;
+    setClips([
+      ...clips,
+      {
+        start: seg.start,
+        end: seg.end,
+        title: cleanTitle || `Klip ${clips.length + 1}`
+      }
+    ]);
+  };
+
+  // Putar video asli dari detik tertentu
+  const handleSeekVideo = (seconds: number) => {
+    if (videoPlayerRef.current) {
+      videoPlayerRef.current.currentTime = seconds;
+      videoPlayerRef.current.play().catch(() => {});
+    }
   };
 
   const handleAddClip = () => {
@@ -244,6 +335,7 @@ export default function App() {
 
       const data = await res.json();
       setActiveJobId(data.job_id);
+      setActiveJobType('cut');
       setJobInfo({
         job_id: data.job_id,
         status: 'queued',
@@ -261,6 +353,7 @@ export default function App() {
     try {
       await fetch(`/api/jobs/${activeJobId}/cancel`, { method: 'POST' });
       setActiveJobId(null);
+      setActiveJobType(null);
       setJobInfo((prev: JobInfo | null) =>
         prev ? { ...prev, status: 'cancelled', message: 'Proses telah dibatalkan.' } : null
       );
@@ -268,6 +361,10 @@ export default function App() {
       console.error('Gagal membatalkan job:', err);
     }
   };
+
+  const filteredSegments = transcription?.segments.filter((seg) =>
+    seg.text.toLowerCase().includes(transcriptFilter.toLowerCase())
+  ) || [];
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-8">
@@ -284,7 +381,7 @@ export default function App() {
                 <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-white via-zinc-200 to-purple-400 bg-clip-text text-transparent">
                   CliperKu
                 </h1>
-                <p className="text-xs text-zinc-400">AI Auto Clipper Lokal • MVP Fase 2</p>
+                <p className="text-xs text-zinc-400">AI Auto Clipper Lokal • Faster-Whisper & FFmpeg</p>
               </div>
             </div>
           </div>
@@ -314,7 +411,7 @@ export default function App() {
             </div>
             <button
               onClick={() => setErrorMessage(null)}
-              className="text-red-400 hover:text-red-200 text-xs underline"
+              className="text-red-400 hover:text-red-200 text-xs underline cursor-pointer"
             >
               Tutup
             </button>
@@ -360,7 +457,7 @@ export default function App() {
                 <p className="text-sm font-medium text-zinc-200">Klik untuk memilih file video dari laptop</p>
                 <p className="text-xs text-zinc-500 mt-1">
                   Mendukung {config.allowed_extensions.join(', ')} hingga {maxUploadDisplay}
-                  {config.disk_reserve_margin_gb !== undefined && ` (Cadangan disk min: ${config.disk_reserve_margin_gb} GB)`}
+                  {config.disk_reserve_margin_gb !== undefined && ` (Cadangan disk: ${config.disk_reserve_margin_gb} GB)`}
                 </p>
               </div>
             </div>
@@ -411,17 +508,163 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {/* Pemutar Video Sumber */}
+              {videoId && (
+                <div className="rounded-xl overflow-hidden bg-black border border-zinc-800 aspect-video max-h-72 w-full flex items-center justify-center">
+                  <video
+                    ref={videoPlayerRef}
+                    controls
+                    preload="metadata"
+                    className="w-full h-full object-contain"
+                    src={`/api/video/${videoId}/stream`}
+                  >
+                    Browser Anda tidak mendukung tag video.
+                  </video>
+                </div>
+              )}
             </div>
           )}
         </section>
 
-        {/* Section 2: Konfigurasi Klip */}
-        {metadata && (
+        {/* Section 2: Analisis & Transkripsi Suara (AI Whisper) */}
+        {metadata && videoId && (
           <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full bg-purple-600/30 border border-purple-500/40 text-purple-300 text-xs font-bold flex items-center justify-center">
                   2
+                </span>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-zinc-200">Analisis Ucapan & Transkripsi AI</h2>
+                  <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-purple-950 border border-purple-800/60 text-purple-300">
+                    Faster-Whisper
+                  </span>
+                </div>
+              </div>
+
+              {/* Pengaturan Transkripsi */}
+              <div className="flex items-center gap-2 text-xs">
+                <select
+                  value={selectedLanguage}
+                  onChange={(e) => setSelectedLanguage(e.target.value)}
+                  className="bg-zinc-800/80 border border-zinc-700/80 rounded-lg px-2.5 py-1.5 text-zinc-300 focus:outline-none focus:border-purple-500"
+                >
+                  <option value="auto">🌐 Bahasa: Otomatis</option>
+                  <option value="id">🇮🇩 Bahasa Indonesia</option>
+                  <option value="en">🇬🇧 English</option>
+                </select>
+
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="bg-zinc-800/80 border border-zinc-700/80 rounded-lg px-2.5 py-1.5 text-zinc-300 focus:outline-none focus:border-purple-500"
+                >
+                  <option value="tiny">⚡ Model: Tiny (Cepat)</option>
+                  <option value="base">⚖️ Model: Base (Seimbang)</option>
+                </select>
+
+                <button
+                  onClick={handleStartTranscribe}
+                  disabled={activeJobId !== null}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+                    activeJobId !== null
+                      ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                      : 'bg-purple-600 hover:bg-purple-500 text-white shadow-md shadow-purple-600/20'
+                  }`}
+                >
+                  <Mic className="w-3.5 h-3.5" />
+                  <span>Transkripsi Audio</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Hasil Transkripsi */}
+            {transcription && (
+              <div className="space-y-4">
+                {/* Ringkasan Metadata Transkripsi */}
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800 text-xs">
+                  <div className="flex items-center gap-3">
+                    <span className="flex items-center gap-1 text-emerald-400 font-medium">
+                      <Sparkles className="w-3.5 h-3.5" /> Bahasa: {transcription.language.toUpperCase()} ({(transcription.language_probability * 100).toFixed(0)}%)
+                    </span>
+                    <span className="text-zinc-600">•</span>
+                    <span className="text-zinc-400">
+                      Total Segmen: {transcription.segments.length}
+                    </span>
+                    <span className="text-zinc-600">•</span>
+                    <span className="text-zinc-400">
+                      Durasi Teranalisis: {transcription.duration}s
+                    </span>
+                  </div>
+
+                  {/* Filter Pencarian Transkrip */}
+                  <div className="relative">
+                    <Search className="w-3 h-3 text-zinc-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Cari kata ucapan..."
+                      value={transcriptFilter}
+                      onChange={(e) => setTranscriptFilter(e.target.value)}
+                      className="bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-2.5 py-1 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-purple-500 w-44"
+                    />
+                  </div>
+                </div>
+
+                {/* List Segmen Ucapan */}
+                <div className="max-h-72 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                  {filteredSegments.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-zinc-500">
+                      Tidak ada kalimat yang cocok dengan pencarian "{transcriptFilter}".
+                    </div>
+                  ) : (
+                    filteredSegments.map((seg: TranscriptSegment) => (
+                      <div
+                        key={seg.id}
+                        className="group flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-zinc-950/40 hover:bg-zinc-950 border border-zinc-800/60 hover:border-purple-500/30 transition text-xs"
+                      >
+                        <div className="flex items-start gap-2.5 flex-1">
+                          <button
+                            onClick={() => handleSeekVideo(seg.start)}
+                            title="Putar video dari detik ini"
+                            className="mt-0.5 px-2 py-0.5 rounded bg-zinc-800 text-purple-400 hover:bg-purple-600 hover:text-white font-mono text-[11px] flex items-center gap-1 transition cursor-pointer flex-shrink-0"
+                          >
+                            <Play className="w-2.5 h-2.5 fill-current" />
+                            {formatSeconds(seg.start)} - {formatSeconds(seg.end)}
+                          </button>
+                          <p className="text-zinc-300 leading-relaxed pt-0.5">
+                            {seg.text}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <span className="text-[10px] text-zinc-500 font-mono">
+                            {(seg.end - seg.start).toFixed(1)}s
+                          </span>
+                          <button
+                            onClick={() => handleAddSegmentToClips(seg)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-600/20 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 transition text-[11px] font-medium cursor-pointer"
+                            title="Jadikan segmen ucapan ini sebagai klip"
+                          >
+                            <Plus className="w-3 h-3" /> Klip
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Section 3: Konfigurasi Klip */}
+        {metadata && (
+          <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-purple-600/30 border border-purple-500/40 text-purple-300 text-xs font-bold flex items-center justify-center">
+                  3
                 </span>
                 <h2 className="text-base font-semibold text-zinc-200">Konfigurasi Potongan Klip</h2>
               </div>
@@ -504,6 +747,14 @@ export default function App() {
                     </span>
 
                     <button
+                      onClick={() => handleSeekVideo(clip.start)}
+                      title="Pratinjau klip di pemutar"
+                      className="p-1.5 text-zinc-400 hover:text-purple-400 rounded-lg hover:bg-zinc-800/60 transition cursor-pointer"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
                       onClick={() => handleRemoveClip(index)}
                       className="p-1.5 text-zinc-500 hover:text-red-400 rounded-lg hover:bg-zinc-800/60 transition cursor-pointer"
                       title="Hapus klip ini"
@@ -539,15 +790,17 @@ export default function App() {
           </section>
         )}
 
-        {/* Section 3: Status Job Latar Belakang & Progress Bar */}
+        {/* Section 4: Status Job Latar Belakang & Progress Bar */}
         {jobInfo && (
           <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full bg-purple-600/30 border border-purple-500/40 text-purple-300 text-xs font-bold flex items-center justify-center">
-                  3
+                  4
                 </span>
-                <h2 className="text-base font-semibold text-zinc-200">Status Pemrosesan</h2>
+                <h2 className="text-base font-semibold text-zinc-200">
+                  Status Pemrosesan {activeJobType === 'transcribe' ? '(Transkripsi AI)' : '(Pemotongan Video)'}
+                </h2>
               </div>
 
               {activeJobId && (
@@ -592,7 +845,7 @@ export default function App() {
           </section>
         )}
 
-        {/* Section 4: Hasil Klip & Preview Player */}
+        {/* Section 5: Hasil Klip & Preview Player */}
         {completedClips.length > 0 && (
           <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur space-y-5">
             <div className="flex items-center gap-2">
