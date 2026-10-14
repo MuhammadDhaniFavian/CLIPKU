@@ -9,9 +9,10 @@ Keamanan:
 
 import asyncio
 import os
+import shutil
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Request
 from fastapi.responses import FileResponse
 import aiofiles
 
@@ -20,7 +21,9 @@ from app.core.config import (
     OUTPUT_DIR,
     MAX_UPLOAD_SIZE_BYTES,
     MAX_UPLOAD_SIZE_MB,
-    ALLOWED_EXTENSIONS
+    ALLOWED_EXTENSIONS,
+    DISK_RESERVE_MARGIN_GB,
+    DISK_RESERVE_MARGIN_BYTES
 )
 from app.schemas.video import (
     VideoMetadata,
@@ -52,17 +55,24 @@ def get_safe_video_path(video_id: str) -> Path:
 @router.get("/config")
 def get_public_config():
     """Mengembalikan konfigurasi publik untuk ditampilkan di UI."""
+    disk_info = shutil.disk_usage(TEMP_DIR)
+    free_disk_gb = round(disk_info.free / (1024 * 1024 * 1024), 2)
     return {
         "max_upload_size_mb": MAX_UPLOAD_SIZE_MB,
         "allowed_extensions": list(ALLOWED_EXTENSIONS),
+        "disk_reserve_margin_gb": DISK_RESERVE_MARGIN_GB,
+        "free_disk_gb": free_disk_gb
     }
 
 
 @router.post("/upload")
-async def upload_video(file: UploadFile = File(...)):
+async def upload_video(request: Request, file: UploadFile = File(...)):
     """
     Streaming upload video ke disk per potongan 1MB.
-    Memastikan penggunaan RAM tetap sangat kecil walau ukuran file hingga 500 MB.
+    Memeriksa:
+    1. Ekstensi file
+    2. Batas ukuran maksimal file (2 GB)
+    3. Sisa ruang disk (harus cukup untuk ukuran file + cadangan 5 GB)
     """
     orig_name = file.filename or "video.mp4"
     ext = Path(orig_name).suffix.lower()
@@ -71,6 +81,43 @@ async def upload_video(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=400,
             detail=f"Format file '{ext}' tidak didukung. Harap gunakan: {', '.join(ALLOWED_EXTENSIONS)}"
+        )
+
+    # 1. Estimasi ukuran file dari header atau objek file jika tersedia
+    content_length_header = request.headers.get("content-length")
+    header_size = 0
+    if content_length_header:
+        try:
+            header_size = int(content_length_header)
+        except ValueError:
+            header_size = 0
+
+    file_obj_size = getattr(file, "size", None) or 0
+    estimated_size = max(header_size, file_obj_size)
+
+    max_gb_display = f"{MAX_UPLOAD_SIZE_MB // 1024} GB" if MAX_UPLOAD_SIZE_MB >= 1024 else f"{MAX_UPLOAD_SIZE_MB} MB"
+
+    if estimated_size > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Ukuran file melebihi batas maksimal ({max_gb_display})"
+        )
+
+    # 2. Pemeriksaan sisa ruang disk di drive proyek
+    free_disk_bytes = shutil.disk_usage(TEMP_DIR).free
+    required_disk_bytes = estimated_size + DISK_RESERVE_MARGIN_BYTES
+
+    if free_disk_bytes < required_disk_bytes:
+        free_gb = free_disk_bytes / (1024 ** 3)
+        req_gb = required_disk_bytes / (1024 ** 3)
+        file_gb = estimated_size / (1024 ** 3)
+        raise HTTPException(
+            status_code=507,
+            detail=(
+                f"Sisa ruang disk di drive proyek tidak mencukupi. "
+                f"Tersisa {free_gb:.2f} GB, dibutuhkan minimal {req_gb:.2f} GB "
+                f"({file_gb:.2f} GB ukuran file + {DISK_RESERVE_MARGIN_GB:.1f} GB cadangan sistem)."
+            )
         )
 
     video_id = str(uuid.uuid4())[:8]
@@ -89,8 +136,22 @@ async def upload_video(file: UploadFile = File(...)):
                         target_path.unlink()
                     raise HTTPException(
                         status_code=413,
-                        detail=f"Ukuran file melebihi batas maksimal ({MAX_UPLOAD_SIZE_MB} MB)"
+                        detail=f"Ukuran file melebihi batas maksimal ({max_gb_display})"
                     )
+
+                # Periksa sisa ruang disk selama penulisan file
+                current_free = shutil.disk_usage(TEMP_DIR).free
+                if current_free < DISK_RESERVE_MARGIN_BYTES:
+                    if target_path.exists():
+                        target_path.unlink()
+                    raise HTTPException(
+                        status_code=507,
+                        detail=(
+                            f"Ruang penyimpanan disk hampir penuh saat proses upload. "
+                            f"Sisa ruang disk kurang dari cadangan minimum {DISK_RESERVE_MARGIN_GB:.1f} GB."
+                        )
+                    )
+
                 await out_file.write(chunk)
     except HTTPException:
         raise

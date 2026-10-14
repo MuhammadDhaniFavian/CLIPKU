@@ -39,4 +39,7 @@ export interface JobInfo {
 export interface AppConfig {
   max_upload_size_mb: number;
   allowed_extensions: string[];
+  disk_reserve_margin_gb?: number;
+  free_disk_gb?: number;
 }
+

@@ -38,3 +38,4 @@ Cukup klik ganda file `start.bat`.
    npm run dev
    ```
    Buka browser di `http://localhost:5173`.
+

@@ -29,10 +29,13 @@ FFMPEG_PATH = LOCAL_FFMPEG if LOCAL_FFMPEG.exists() else Path(shutil.which("ffmp
 FFPROBE_PATH = LOCAL_FFPROBE if LOCAL_FFPROBE.exists() else Path(shutil.which("ffprobe") or "ffprobe")
 
 # === Batas Upload ===
-# Batas ukuran file video dalam bytes (default: 500 MB)
-# Mudah diubah di sini tanpa mengubah kode lain.
-MAX_UPLOAD_SIZE_MB = 500
+# Batas ukuran file video dalam bytes (default: 2 GB / 2048 MB)
+MAX_UPLOAD_SIZE_MB = 2048
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+# Cadangan ruang disk minimum (dalam GB dan Bytes)
+DISK_RESERVE_MARGIN_GB = 5.0
+DISK_RESERVE_MARGIN_BYTES = int(DISK_RESERVE_MARGIN_GB * 1024 * 1024 * 1024)
 
 # === Format Video yang Diterima ===
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}

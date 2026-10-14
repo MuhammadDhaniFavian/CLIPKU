@@ -15,9 +15,19 @@ import type { VideoMetadata, ClipRange, ClipInfo, JobInfo, AppConfig } from './t
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig>({
-    max_upload_size_mb: 500,
-    allowed_extensions: ['.mp4', '.mov', '.mkv']
+    max_upload_size_mb: 2048,
+    allowed_extensions: ['.mp4', '.mov', '.mkv', '.avi', '.webm']
   });
+
+  const formatSizeDisplay = (mb: number) => {
+    if (mb >= 1024) {
+      const gb = mb / 1024;
+      return gb % 1 === 0 ? `${gb} GB` : `${gb.toFixed(1)} GB`;
+    }
+    return `${mb} MB`;
+  };
+
+  const maxUploadDisplay = formatSizeDisplay(config.max_upload_size_mb);
 
   // State Video
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -89,8 +99,21 @@ export default function App() {
     }
 
     if (file.size > config.max_upload_size_mb * 1024 * 1024) {
-      setErrorMessage(`Ukuran file melebihi batas maksimal ${config.max_upload_size_mb} MB.`);
+      const fileSizeGb = (file.size / (1024 * 1024 * 1024)).toFixed(2);
+      setErrorMessage(`Ukuran file (${fileSizeGb} GB) melebihi batas maksimal ${maxUploadDisplay}.`);
       return;
+    }
+
+    // Validasi sisa ruang disk di drive proyek
+    if (config.free_disk_gb !== undefined && config.disk_reserve_margin_gb !== undefined) {
+      const fileGb = file.size / (1024 * 1024 * 1024);
+      const requiredGb = fileGb + config.disk_reserve_margin_gb;
+      if (config.free_disk_gb < requiredGb) {
+        setErrorMessage(
+          `Sisa ruang disk di drive proyek tidak mencukupi (${config.free_disk_gb.toFixed(2)} GB bebas). Dibutuhkan minimal ${requiredGb.toFixed(2)} GB (${fileGb.toFixed(2)} GB file + ${config.disk_reserve_margin_gb} GB cadangan sistem).`
+        );
+        return;
+      }
     }
 
     setErrorMessage(null);
@@ -269,7 +292,10 @@ export default function App() {
           <div className="flex items-center gap-3 text-xs">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-300">
               <HardDrive className="w-3.5 h-3.5 text-purple-400" />
-              <span>Batas: {config.max_upload_size_mb} MB</span>
+              <span>Batas: {maxUploadDisplay}</span>
+              {config.free_disk_gb !== undefined && (
+                <span className="text-zinc-500">• Bebas: {config.free_disk_gb} GB</span>
+              )}
             </div>
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-950/40 border border-emerald-800/40 text-emerald-400">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -333,7 +359,8 @@ export default function App() {
               <div>
                 <p className="text-sm font-medium text-zinc-200">Klik untuk memilih file video dari laptop</p>
                 <p className="text-xs text-zinc-500 mt-1">
-                  Mendukung {config.allowed_extensions.join(', ')} hingga {config.max_upload_size_mb} MB
+                  Mendukung {config.allowed_extensions.join(', ')} hingga {maxUploadDisplay}
+                  {config.disk_reserve_margin_gb !== undefined && ` (Cadangan disk min: ${config.disk_reserve_margin_gb} GB)`}
                 </p>
               </div>
             </div>
