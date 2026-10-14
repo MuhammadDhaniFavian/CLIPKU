@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project - temporary & output files
+backend/temp/
+backend/output/
+tools/
+
+# Video & model files
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.bin
+*.pt
+*.onnx
+
