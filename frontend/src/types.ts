@@ -49,6 +49,30 @@ export interface TranscriptionResult {
   full_text: string;
 }
 
+export type CandidateStatus = 'menunggu' | 'diterima' | 'ditolak';
+
+export interface ScoreBreakdown {
+  hook_score: number;
+  context_score: number;
+  value_score: number;
+  clarity_score: number;
+  duration_score: number;
+  penalty: number;
+}
+
+export interface MomentCandidate {
+  id: string;
+  start: number;
+  end: number;
+  duration: number;
+  judul: string;
+  skor: number;
+  alasan: string;
+  status: CandidateStatus;
+  text: string;
+  breakdown?: ScoreBreakdown;
+}
+
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface JobInfo {

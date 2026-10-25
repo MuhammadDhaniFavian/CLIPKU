@@ -111,3 +111,51 @@ class AutoSplitRequest(BaseModel):
     clip_duration: int = Field(default=30, ge=5, le=300)
 
 
+class CandidateStatus(str, Enum):
+    """Status kurasi kandidat klip oleh pengguna."""
+    MENUNGGU = "menunggu"
+    DITERIMA = "diterima"
+    DITOLAK = "ditolak"
+
+
+class ScoreBreakdown(BaseModel):
+    """Rincian perolehan poin penilaian (total 0-100)."""
+    hook_score: int = Field(ge=0, le=20, description="Daya tarik awal / hook (0-20)")
+    context_score: int = Field(ge=0, le=25, description="Kelengkapan struktur awal-isi-akhir (0-25)")
+    value_score: int = Field(ge=0, le=20, description="Nilai informasi, cerita, atau pertanyaan (0-20)")
+    clarity_score: int = Field(ge=0, le=10, description="Kejelasan ucapan / confidence (0-10)")
+    duration_score: int = Field(ge=0, le=10, description="Kesesuaian durasi ideal 15-60 detik (0-10)")
+    penalty: int = Field(ge=0, le=15, description="Pengurang jeda panjang / kalimat gantung (0-15)")
+
+
+class MomentCandidate(BaseModel):
+    """Kandidat momen menarik yang diidentifikasi oleh sistem scoring."""
+    id: str
+    start: float
+    end: float
+    duration: float
+    judul: str
+    skor: int = Field(ge=0, le=100)
+    alasan: str
+    status: CandidateStatus = CandidateStatus.MENUNGGU
+    text: str
+    breakdown: Optional[ScoreBreakdown] = None
+
+
+class AnalyzeMomentsRequest(BaseModel):
+    """Permintaan analisis dan penilaian kandidat momen dari transkrip."""
+    video_id: str
+    min_duration: int = Field(default=15, ge=5, le=60)
+    max_duration: int = Field(default=60, ge=15, le=180)
+    target_clips: int = Field(default=5, ge=1, le=15)
+
+
+class UpdateCandidateRequest(BaseModel):
+    """Permintaan pembaruan status atau penyesuaian kandidat momen."""
+    status: Optional[CandidateStatus] = None
+    start: Optional[float] = None
+    end: Optional[float] = None
+    judul: Optional[str] = None
+
+
+

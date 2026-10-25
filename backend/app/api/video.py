@@ -33,10 +33,17 @@ from app.schemas.video import (
     ClipRange,
     AutoSplitRequest,
     TranscribeRequest,
-    TranscriptionResult
+    TranscriptionResult,
+    CandidateStatus,
+    ScoreBreakdown,
+    MomentCandidate,
+    AnalyzeMomentsRequest,
+    UpdateCandidateRequest
 )
 from app.services.ffmpeg_service import FFmpegService
 from app.services.job_manager import job_manager
+from app.services.moment_service import MomentService
+
 
 router = APIRouter(prefix="/api", tags=["video"])
 
@@ -351,5 +358,111 @@ async def stream_source_video(video_id: str):
         filename=video_path.name,
         headers={"Accept-Ranges": "bytes"}
     )
+
+
+@router.post("/video/{video_id}/analyze-moments", response_model=list[MomentCandidate])
+async def analyze_video_moments(video_id: str, req: Optional[AnalyzeMomentsRequest] = None):
+    """
+    Menganalisis hasil transkripsi ucapan dan menilai kandidat momen terbaik (skor 0-100).
+    Menghasilkan rekomendasi klip berkonteks lengkap dengan hook, bobot nilai, dan alasan.
+    """
+    transcript_file = TEMP_DIR / f"{video_id}_transcript.json"
+    if not transcript_file.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="Transkrip ucapan belum tersedia. Harap jalankan proses transkripsi terlebih dahulu."
+        )
+
+    import json
+    with open(transcript_file, "r", encoding="utf-8") as f:
+        trans_data = json.load(f)
+
+    transcription = TranscriptionResult(**trans_data)
+
+    min_dur = req.min_duration if req else 15
+    max_dur = req.max_duration if req else 60
+    target_clips = req.target_clips if req else 5
+
+    candidates = MomentService.generate_candidates(
+        transcription=transcription,
+        min_duration=min_dur,
+        max_duration=max_dur,
+        target_clips=target_clips
+    )
+
+    # Simpan kandidat momen ke cache file lokal
+    moments_cache_file = TEMP_DIR / f"{video_id}_moments.json"
+    with open(moments_cache_file, "w", encoding="utf-8") as f:
+        json.dump([c.model_dump() for c in candidates], f, indent=2)
+
+    return candidates
+
+
+@router.get("/video/{video_id}/moments", response_model=list[MomentCandidate])
+async def get_video_moments(video_id: str):
+    """
+    Mengambil daftar kandidat momen yang telah dinilai dan tersimpan untuk video ini.
+    """
+    moments_cache_file = TEMP_DIR / f"{video_id}_moments.json"
+    if not moments_cache_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Analisis momen belum dilakukan untuk video ini."
+        )
+
+    import json
+    with open(moments_cache_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    return [MomentCandidate(**item) for item in data]
+
+
+@router.patch("/video/{video_id}/moments/{moment_id}", response_model=MomentCandidate)
+async def update_moment_candidate(
+    video_id: str,
+    moment_id: str,
+    req: UpdateCandidateRequest
+):
+    """
+    Memperbarui kurasi kandidat momen (status diterima/ditolak, atau edit durasi/judul).
+    """
+    moments_cache_file = TEMP_DIR / f"{video_id}_moments.json"
+    if not moments_cache_file.exists():
+        raise HTTPException(status_code=404, detail="File kandidat momen tidak ditemukan.")
+
+    import json
+    with open(moments_cache_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    found_idx = None
+    for idx, item in enumerate(data):
+        if item.get("id") == moment_id:
+            found_idx = idx
+            break
+
+    if found_idx is None:
+        raise HTTPException(status_code=404, detail=f"Kandidat momen ID '{moment_id}' tidak ditemukan.")
+
+    # Update atribut
+    candidate = data[found_idx]
+    if req.status is not None:
+        candidate["status"] = req.status.value
+    if req.start is not None:
+        candidate["start"] = req.start
+    if req.end is not None:
+        candidate["end"] = req.end
+    if req.judul is not None:
+        candidate["judul"] = req.judul
+
+    # Recalculate duration if start or end changed
+    candidate["duration"] = round(candidate["end"] - candidate["start"], 2)
+
+    data[found_idx] = candidate
+
+    with open(moments_cache_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+    return MomentCandidate(**candidate)
+
 
 

@@ -13,9 +13,14 @@ import {
   Mic,
   Play,
   Search,
-  Sparkles
+  Sparkles,
+  Check,
+  X,
+  Award,
+  ChevronDown,
+  ChevronUp,
+  Layers
 } from 'lucide-react';
-
 import type {
   VideoMetadata,
   ClipRange,
@@ -23,7 +28,9 @@ import type {
   JobInfo,
   AppConfig,
   TranscriptionResult,
-  TranscriptSegment
+  TranscriptSegment,
+  MomentCandidate,
+  CandidateStatus
 } from './types';
 
 export default function App() {
@@ -63,6 +70,12 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState<string>('tiny');
   const [transcriptFilter, setTranscriptFilter] = useState<string>('');
 
+  // State Kandidat Momen Menarik (Fase 4)
+  const [candidates, setCandidates] = useState<MomentCandidate[]>([]);
+  const [isAnalyzingMoments, setIsAnalyzingMoments] = useState<boolean>(false);
+  const [targetClipsCount, setTargetClipsCount] = useState<number>(5);
+  const [expandedBreakdownId, setExpandedBreakdownId] = useState<string | null>(null);
+
   // State Klip
   const [clips, setClips] = useState<ClipRange[]>([]);
   const [splitDuration, setSplitDuration] = useState<number>(30);
@@ -99,6 +112,10 @@ export default function App() {
         if (data.status === 'completed') {
           if (data.transcription) {
             setTranscription(data.transcription);
+            // Otomatis picu analisis momen setelah transkripsi selesai
+            if (videoId) {
+              fetchMoments(videoId);
+            }
           }
           if (data.result) {
             setCompletedClips(data.result);
@@ -120,7 +137,7 @@ export default function App() {
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
-  }, [activeJobId]);
+  }, [activeJobId, videoId]);
 
   // Handler Pilih Video
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -155,6 +172,7 @@ export default function App() {
     setVideoFile(file);
     setMetadata(null);
     setTranscription(null);
+    setCandidates([]);
     setCompletedClips([]);
     setJobInfo(null);
     setClips([]);
@@ -182,7 +200,7 @@ export default function App() {
       setMetadata(data.metadata);
       setUploadProgress(100);
 
-      // Inisialisasi awal 3 klip default
+      // Inisialisasi awal klip default
       generateDefaultClips(data.metadata.duration_seconds, 30);
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan saat upload.');
@@ -250,6 +268,105 @@ export default function App() {
     } catch (err: any) {
       setErrorMessage(err.message || 'Gagal memulai transkripsi.');
     }
+  };
+
+  // Handler Analisis Momen Menarik (AI Scoring)
+  const handleAnalyzeMoments = async () => {
+    if (!videoId) return;
+    setIsAnalyzingMoments(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await fetch(`/api/video/${videoId}/analyze-moments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          video_id: videoId,
+          min_duration: 15,
+          max_duration: 60,
+          target_clips: targetClipsCount
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Gagal menganalisis momen.');
+      }
+
+      const data: MomentCandidate[] = await res.json();
+      setCandidates(data);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Gagal menilai momen menarik.');
+    } finally {
+      setIsAnalyzingMoments(false);
+    }
+  };
+
+  const fetchMoments = async (vId: string) => {
+    try {
+      const res = await fetch(`/api/video/${vId}/moments`);
+      if (res.ok) {
+        const data = await res.json();
+        setCandidates(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Handler update status kurasi kandidat (terima / tolak)
+  const handleUpdateCandidateStatus = async (candId: string, status: CandidateStatus) => {
+    if (!videoId) return;
+
+    // Optimistic UI update
+    setCandidates((prev) =>
+      prev.map((c) => (c.id === candId ? { ...c, status } : c))
+    );
+
+    try {
+      await fetch(`/api/video/${videoId}/moments/${candId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+    } catch (e) {
+      console.error('Gagal mengupdate status kandidat:', e);
+    }
+  };
+
+  // Terima semua rekomendasi momen
+  const handleAcceptAllCandidates = async () => {
+    if (!videoId) return;
+    const updated = candidates.map((c) => ({ ...c, status: 'diterima' as CandidateStatus }));
+    setCandidates(updated);
+
+    for (const c of candidates) {
+      if (c.status !== 'diterima') {
+        fetch(`/api/video/${videoId}/moments/${c.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'diterima' })
+        }).catch(() => {});
+      }
+    }
+  };
+
+  // Salin momen yang berstatus diterima ke Daftar Klip untuk dipotong
+  const handlePushAcceptedToClips = () => {
+    const accepted = candidates.filter((c) => c.status === 'diterima');
+    if (accepted.length === 0) {
+      setErrorMessage('Belum ada kandidat momen yang berstatus Diterima. Klik tombol Terima (✓) pada momen terlebih dahulu.');
+      return;
+    }
+
+    const newClips: ClipRange[] = accepted.map((c) => ({
+      start: c.start,
+      end: c.end,
+      title: c.judul
+    }));
+
+    setClips(newClips);
+    setErrorMessage(null);
   };
 
   // Tambahkan satu segmen transkripsi ke daftar klip
@@ -366,6 +483,8 @@ export default function App() {
     seg.text.toLowerCase().includes(transcriptFilter.toLowerCase())
   ) || [];
 
+  const acceptedCount = candidates.filter((c) => c.status === 'diterima').length;
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-8">
       <div className="max-w-5xl mx-auto space-y-8">
@@ -381,7 +500,7 @@ export default function App() {
                 <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-white via-zinc-200 to-purple-400 bg-clip-text text-transparent">
                   CliperKu
                 </h1>
-                <p className="text-xs text-zinc-400">AI Auto Clipper Lokal • Faster-Whisper & FFmpeg</p>
+                <p className="text-xs text-zinc-400">AI Auto Clipper Lokal • Momen Scoring & FFmpeg</p>
               </div>
             </div>
           </div>
@@ -594,7 +713,7 @@ export default function App() {
                     </span>
                     <span className="text-zinc-600">•</span>
                     <span className="text-zinc-400">
-                      Durasi Teranalisis: {transcription.duration}s
+                      Durasi: {transcription.duration}s
                     </span>
                   </div>
 
@@ -612,7 +731,7 @@ export default function App() {
                 </div>
 
                 {/* List Segmen Ucapan */}
-                <div className="max-h-72 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                <div className="max-h-60 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                   {filteredSegments.length === 0 ? (
                     <div className="p-4 text-center text-xs text-zinc-500">
                       Tidak ada kalimat yang cocok dengan pencarian "{transcriptFilter}".
@@ -658,13 +777,248 @@ export default function App() {
           </section>
         )}
 
-        {/* Section 3: Konfigurasi Klip */}
-        {metadata && (
+        {/* Section 3: Rekomendasi Momen Menarik (AI Scoring 0-100) */}
+        {metadata && videoId && transcription && (
           <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full bg-purple-600/30 border border-purple-500/40 text-purple-300 text-xs font-bold flex items-center justify-center">
                   3
+                </span>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-zinc-200">
+                    Rekomendasi Momen Terbaik
+                  </h2>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800/60 text-emerald-300 flex items-center gap-1">
+                    <Award className="w-3 h-3" /> Skor 0-100
+                  </span>
+                </div>
+              </div>
+
+              {/* Kontrol Penilaian */}
+              <div className="flex items-center gap-2 text-xs">
+                <div className="flex items-center gap-1.5 text-zinc-400">
+                  <span>Target:</span>
+                  <select
+                    value={targetClipsCount}
+                    onChange={(e) => setTargetClipsCount(parseInt(e.target.value) || 5)}
+                    className="bg-zinc-800/80 border border-zinc-700/80 rounded-lg px-2 py-1 text-zinc-300 focus:outline-none"
+                  >
+                    <option value={3}>3 Klip</option>
+                    <option value={5}>5 Klip</option>
+                    <option value={8}>8 Klip</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={handleAnalyzeMoments}
+                  disabled={isAnalyzingMoments}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+                    isAnalyzingMoments
+                      ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-md shadow-purple-600/20'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{isAnalyzingMoments ? 'Menilai Momen...' : 'Temukan Momen Menarik'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* List Kandidat Momen */}
+            {candidates.length > 0 ? (
+              <div className="space-y-4">
+                {/* Header Kurasi Cepat */}
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-zinc-950/60 border border-zinc-800 text-xs">
+                  <span className="text-zinc-400">
+                    Ditemukan <span className="text-purple-400 font-semibold">{candidates.length} kandidat</span> momen berkualitas ({acceptedCount} disetujui).
+                  </span>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleAcceptAllCandidates}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs transition cursor-pointer"
+                    >
+                      Terima Semua
+                    </button>
+                    <button
+                      onClick={handlePushAcceptedToClips}
+                      disabled={acceptedCount === 0}
+                      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${
+                        acceptedCount === 0
+                          ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                          : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Jadikan Klip untuk Dipotong ({acceptedCount})</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Grid Kartu Kandidat */}
+                <div className="space-y-3">
+                  {candidates.map((cand, idx) => {
+                    const isExpanded = expandedBreakdownId === cand.id;
+                    const isAccepted = cand.status === 'diterima';
+                    const isRejected = cand.status === 'ditolak';
+
+                    // Warna skor
+                    const scoreBg =
+                      cand.skor >= 80
+                        ? 'bg-emerald-950/80 border-emerald-800/80 text-emerald-400'
+                        : cand.skor >= 65
+                        ? 'bg-purple-950/80 border-purple-800/80 text-purple-400'
+                        : 'bg-amber-950/80 border-amber-800/80 text-amber-400';
+
+                    return (
+                      <div
+                        key={cand.id}
+                        className={`p-4 rounded-xl border transition-all text-xs space-y-3 ${
+                          isAccepted
+                            ? 'bg-zinc-950/90 border-emerald-500/50 shadow-sm shadow-emerald-500/10'
+                            : isRejected
+                            ? 'bg-zinc-950/40 border-zinc-800/50 opacity-60'
+                            : 'bg-zinc-950/60 border-zinc-800/80 hover:border-zinc-700'
+                        }`}
+                      >
+                        {/* Baris Atas: Peringkat, Judul, Skor, Status & Aksi */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                            <span className="w-5 h-5 rounded-md bg-zinc-800 text-zinc-400 font-mono font-bold flex items-center justify-center text-[10px]">
+                              #{idx + 1}
+                            </span>
+                            <h3 className="font-semibold text-sm text-zinc-200 truncate" title={cand.judul}>
+                              {cand.judul}
+                            </h3>
+                            <span className="text-[11px] text-zinc-400 font-mono px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 flex-shrink-0">
+                              {cand.duration}s ({formatSeconds(cand.start)} - {formatSeconds(cand.end)})
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {/* Skor Badge */}
+                            <div className={`px-2.5 py-1 rounded-lg border font-mono font-bold text-xs flex items-center gap-1 ${scoreBg}`}>
+                              <span>Skor: {cand.skor}</span>
+                              <span className="text-[10px] opacity-70">/100</span>
+                            </div>
+
+                            {/* Tombol Putar */}
+                            <button
+                              onClick={() => handleSeekVideo(cand.start)}
+                              title="Pratinjau video dari detik awal momen ini"
+                              className="p-1.5 rounded-lg bg-zinc-800 hover:bg-purple-600 text-zinc-300 hover:text-white transition cursor-pointer"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" />
+                            </button>
+
+                            {/* Tombol Terima */}
+                            <button
+                              onClick={() => handleUpdateCandidateStatus(cand.id, isAccepted ? 'menunggu' : 'diterima')}
+                              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border transition font-medium cursor-pointer ${
+                                isAccepted
+                                  ? 'bg-emerald-600 border-emerald-500 text-white'
+                                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-emerald-600 hover:text-emerald-400'
+                              }`}
+                              title={isAccepted ? 'Batalkan status diterima' : 'Terima rekomendasi momen ini'}
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>{isAccepted ? 'Diterima' : 'Terima'}</span>
+                            </button>
+
+                            {/* Tombol Tolak */}
+                            <button
+                              onClick={() => handleUpdateCandidateStatus(cand.id, isRejected ? 'menunggu' : 'ditolak')}
+                              className={`p-1 rounded-lg border transition cursor-pointer ${
+                                isRejected
+                                  ? 'bg-red-950 border-red-800 text-red-400'
+                                  : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:border-red-800 hover:text-red-400'
+                              }`}
+                              title={isRejected ? 'Batalkan status ditolak' : 'Tolak kandidat ini'}
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Alasan Rekomendasi & Kutipan Teks */}
+                        <div className="space-y-1.5 pl-7 border-l-2 border-purple-500/20">
+                          <p className="text-zinc-300 italic text-[11px] leading-relaxed">
+                            "{cand.text}"
+                          </p>
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-400 pt-1">
+                            <span className="flex items-center gap-1 text-purple-300">
+                              <Sparkles className="w-3 h-3 text-purple-400" /> {cand.alasan}
+                            </span>
+
+                            {cand.breakdown && (
+                              <button
+                                onClick={() =>
+                                  setExpandedBreakdownId(isExpanded ? null : cand.id)
+                                }
+                                className="text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5 cursor-pointer"
+                              >
+                                <span>Rincian Nilai</span>
+                                {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Rincian Poin Penilaian (Jika Di-expand) */}
+                        {isExpanded && cand.breakdown && (
+                          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 p-3 rounded-lg bg-zinc-900/90 border border-zinc-800/80 text-[11px]">
+                            <div>
+                              <span className="text-zinc-500 block">Hook Awal</span>
+                              <span className="text-zinc-200 font-mono font-medium">{cand.breakdown.hook_score}/20</span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 block">Struktur Konteks</span>
+                              <span className="text-zinc-200 font-mono font-medium">{cand.breakdown.context_score}/25</span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 block">Nilai Informasi</span>
+                              <span className="text-zinc-200 font-mono font-medium">{cand.breakdown.value_score}/20</span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 block">Kejelasan Ucapan</span>
+                              <span className="text-zinc-200 font-mono font-medium">{cand.breakdown.clarity_score}/10</span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 block">Durasi Ideal</span>
+                              <span className="text-zinc-200 font-mono font-medium">{cand.breakdown.duration_score}/10</span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 block">Penalti Jeda</span>
+                              <span className="text-red-400 font-mono font-medium">-{cand.breakdown.penalty}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="p-8 text-center rounded-xl border border-dashed border-zinc-800 bg-zinc-950/20 space-y-2">
+                <p className="text-sm font-medium text-zinc-300">
+                  Belum ada momen yang dianalisis
+                </p>
+                <p className="text-xs text-zinc-500 max-w-md mx-auto">
+                  Klik tombol <strong>"Temukan Momen Menarik"</strong> di atas untuk memindai kalimat pembuka (hook), struktur cerita, dan nilai informasi dari video ini secara otomatis.
+                </p>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Section 4: Konfigurasi Klip (Untuk Dipotong) */}
+        {metadata && (
+          <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-purple-600/30 border border-purple-500/40 text-purple-300 text-xs font-bold flex items-center justify-center">
+                  4
                 </span>
                 <h2 className="text-base font-semibold text-zinc-200">Konfigurasi Potongan Klip</h2>
               </div>
@@ -790,13 +1144,13 @@ export default function App() {
           </section>
         )}
 
-        {/* Section 4: Status Job Latar Belakang & Progress Bar */}
+        {/* Section 5: Status Job Latar Belakang & Progress Bar */}
         {jobInfo && (
           <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full bg-purple-600/30 border border-purple-500/40 text-purple-300 text-xs font-bold flex items-center justify-center">
-                  4
+                  5
                 </span>
                 <h2 className="text-base font-semibold text-zinc-200">
                   Status Pemrosesan {activeJobType === 'transcribe' ? '(Transkripsi AI)' : '(Pemotongan Video)'}
@@ -845,7 +1199,7 @@ export default function App() {
           </section>
         )}
 
-        {/* Section 5: Hasil Klip & Preview Player */}
+        {/* Section 6: Hasil Klip & Preview Player */}
         {completedClips.length > 0 && (
           <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur space-y-5">
             <div className="flex items-center gap-2">
