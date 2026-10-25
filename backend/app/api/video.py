@@ -250,11 +250,16 @@ async def request_cut(req: CutRequest):
         job_manager.run_cut_job(
             job_id=job_id,
             input_path=video_path,
-            clips=req.clips
+            clips=req.clips,
+            video_id=req.video_id,
+            vertical_mode=req.vertical_mode.value,
+            burn_subtitles=req.burn_subtitles,
+            subtitle_style=req.subtitle_style.value
         )
     )
 
     return {"job_id": job_id, "message": "Job pemotongan berhasil didaftarkan"}
+
 
 
 @router.get("/jobs/{job_id}", response_model=JobInfo)
@@ -296,6 +301,43 @@ async def get_clip_file(clip_filename: str):
         filename=safe_filename,
         headers={"Accept-Ranges": "bytes"}
     )
+
+
+@router.get("/clips/{clip_filename}/subtitles")
+async def get_clip_subtitles(clip_filename: str):
+    """
+    Menyediakan file subtitle SRT pendamping untuk klip video yang dipotong.
+    """
+    safe_filename = Path(clip_filename).name
+    # Ganti ekstensi .mp4 dengan .srt
+    srt_filename = Path(safe_filename).stem + ".srt"
+    srt_path = OUTPUT_DIR / srt_filename
+
+    if not srt_path.exists():
+        raise HTTPException(status_code=404, detail="File subtitle SRT tidak ditemukan untuk klip ini")
+
+    return FileResponse(
+        path=srt_path,
+        media_type="application/x-subrip",
+        filename=srt_filename
+    )
+
+
+@router.post("/open-output-folder")
+async def open_output_folder():
+    """
+    Membuka folder output hasil klip di Windows File Explorer secara aman.
+    """
+    try:
+        folder_str = str(OUTPUT_DIR.resolve())
+        if os.name == "nt":
+            os.startfile(folder_str)
+            return {"message": "Folder output berhasil dibuka di File Explorer", "folder_path": folder_str}
+        else:
+            return {"message": f"Folder output berada di: {folder_str}", "folder_path": folder_str}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal membuka folder output: {str(e)}")
+
 
 
 @router.post("/video/{video_id}/transcribe")

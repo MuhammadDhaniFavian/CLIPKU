@@ -12,10 +12,13 @@ import os
 import uuid
 from pathlib import Path
 from typing import Dict, Optional, List
+import json
 from app.core.config import TEMP_DIR, OUTPUT_DIR
 from app.schemas.video import JobStatus, JobInfo, ClipRange, ClipInfo, TranscriptionResult
 from app.services.ffmpeg_service import FFmpegService
 from app.services.whisper_service import whisper_service
+from app.services.subtitle_service import SubtitleService
+
 
 
 class JobManager:
@@ -81,25 +84,49 @@ class JobManager:
             except Exception:
                 pass
 
-    async def run_cut_job(self, job_id: str, input_path: Path, clips: List[ClipRange]):
+    async def run_cut_job(
+        self,
+        job_id: str,
+        input_path: Path,
+        clips: List[ClipRange],
+        video_id: Optional[str] = None,
+        vertical_mode: str = "none",
+        burn_subtitles: bool = True,
+        subtitle_style: str = "tiktok_yellow"
+    ):
         """
         Menjalankan proses pemotongan dalam antrean terkontrol (1 job berat per waktu).
+        Mendukung konversi format vertikal 9:16 dan burn-in subtitle ASS secara sinkron.
         """
         job = self.jobs.get(job_id)
         if not job:
             return
 
         async with self.lock:
-            # Jika sebelum giliran jalan pengguna sudah membatalkan
             if job.status == JobStatus.CANCELLED:
                 return
 
             job.status = JobStatus.RUNNING
-            job.message = "Memulai pemotongan video..."
+            job.message = "Mempersiapkan pemrosesan video..."
             job.progress = 5
+
+            # Muat transkrip jika burn_subtitles aktif
+            transcript_segments = []
+            v_id = video_id or input_path.stem
+            transcript_file = TEMP_DIR / f"{v_id}_transcript.json"
+
+            if burn_subtitles and subtitle_style != "none" and transcript_file.exists():
+                try:
+                    with open(transcript_file, "r", encoding="utf-8") as f:
+                        t_data = json.load(f)
+                    t_res = TranscriptionResult(**t_data)
+                    transcript_segments = t_res.segments
+                except Exception as e:
+                    print(f"[JobManager] Gagal membaca file transkrip: {e}")
 
             output_clips: List[ClipInfo] = []
             total_clips = len(clips)
+            is_vertical = (vertical_mode in ["blur", "crop"])
 
             try:
                 for idx, clip in enumerate(clips):
@@ -107,34 +134,73 @@ class JobManager:
                         break
 
                     clip_num = idx + 1
-                    job.message = f"Memotong klip {clip_num} dari {total_clips} ({clip.start:.1f}s - {clip.end:.1f}s)..."
+                    status_text = f"Memproses klip {clip_num} dari {total_clips}"
+                    if is_vertical:
+                        status_text += " [9:16 Vertikal]"
+                    if burn_subtitles and subtitle_style != "none":
+                        status_text += " [Burn-in Subtitle]"
+                    job.message = f"{status_text} ({clip.start:.1f}s - {clip.end:.1f}s)..."
 
-                    # Nama file klip terstandar
                     clean_name = input_path.stem
-                    clip_filename = f"{clean_name}_clip_{clip_num}_{int(clip.start)}s_{int(clip.end)}s.mp4"
+                    suffix = "_9x16" if is_vertical else ""
+                    clip_filename = f"{clean_name}_clip_{clip_num}_{int(clip.start)}s_{int(clip.end)}s{suffix}.mp4"
                     output_path = OUTPUT_DIR / clip_filename
                     self.created_files[job_id].append(output_path)
+
+                    # Buat subtitle ASS dan SRT jika diaktifkan
+                    ass_path: Optional[Path] = None
+                    srt_filename: Optional[str] = None
+
+                    if burn_subtitles and subtitle_style != "none":
+                        ass_content, srt_content = SubtitleService.generate_subtitles_for_clip(
+                            segments=transcript_segments,
+                            clip_start=clip.start,
+                            clip_end=clip.end,
+                            style=subtitle_style,
+                            is_vertical=is_vertical,
+                            custom_text=clip.custom_subtitle
+                        )
+
+                        if ass_content:
+                            ass_path = TEMP_DIR / f"{clean_name}_clip_{clip_num}.ass"
+                            with open(ass_path, "w", encoding="utf-8") as f:
+                                f.write(ass_content)
+                            self.created_files[job_id].append(ass_path)
+
+                        if srt_content:
+                            srt_filename = f"{clean_name}_clip_{clip_num}_{int(clip.start)}s_{int(clip.end)}s{suffix}.srt"
+                            srt_path = OUTPUT_DIR / srt_filename
+                            with open(srt_path, "w", encoding="utf-8") as f:
+                                f.write(srt_content)
+                            self.created_files[job_id].append(srt_path)
 
                     def register_proc(p):
                         self.active_processes[job_id] = p
 
-                    # Eksekusi pemotongan akurat
+                    # Eksekusi pemotongan akurat dengan vertical mode & subtitle
                     await FFmpegService.cut_clip_accurate(
                         input_path=input_path,
                         output_path=output_path,
                         start_sec=clip.start,
                         end_sec=clip.end,
+                        vertical_mode=vertical_mode,
+                        ass_subtitle_path=ass_path,
                         register_process=register_proc
                     )
 
-                    # Lepas referensi proses yang sudah selesai
                     self.active_processes.pop(job_id, None)
+
+                    # Bersihkan file ASS sementara setelah render selesai
+                    if ass_path and ass_path.exists():
+                        try:
+                            ass_path.unlink()
+                        except Exception:
+                            pass
 
                     if job.status == JobStatus.CANCELLED:
                         self._cleanup_job_files(job_id)
                         return
 
-                    # Hitung ukuran file hasil
                     size_mb = round(output_path.stat().st_size / (1024 * 1024), 2)
                     duration = round(clip.end - clip.start, 2)
                     title = clip.title or f"Klip {clip_num}"
@@ -146,18 +212,20 @@ class JobManager:
                             start=clip.start,
                             end=clip.end,
                             duration=duration,
-                            file_size_mb=size_mb
+                            file_size_mb=size_mb,
+                            is_vertical=is_vertical,
+                            has_subtitles=(ass_path is not None),
+                            srt_filename=srt_filename
                         )
                     )
 
-                    # Update progress bar
                     progress_pct = int(5 + ((idx + 1) / total_clips) * 90)
                     job.progress = min(progress_pct, 95)
 
                 if job.status != JobStatus.CANCELLED:
                     job.status = JobStatus.COMPLETED
                     job.progress = 100
-                    job.message = f"Berhasil memotong {len(output_clips)} klip!"
+                    job.message = f"Berhasil memproses {len(output_clips)} klip!"
                     job.result = output_clips
 
             except Exception as e:
@@ -168,6 +236,7 @@ class JobManager:
                     self._cleanup_job_files(job_id)
             finally:
                 self.active_processes.pop(job_id, None)
+
 
     async def run_transcribe_job(
         self,

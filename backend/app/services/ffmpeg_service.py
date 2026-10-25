@@ -88,6 +88,13 @@ class FFmpegService:
             audio_codec=audio_stream.get("codec_name") if audio_stream else None
         )
 
+    @staticmethod
+    def _escape_filter_path(p: Path) -> str:
+        """Escape path untuk filter FFmpeg di Windows (ganti backslash dan escape titik dua)."""
+        s = str(p.resolve()).replace("\\", "/")
+        s = s.replace(":", "\\:")
+        return s
+
     @classmethod
     async def cut_clip_accurate(
         cls,
@@ -95,41 +102,64 @@ class FFmpegService:
         output_path: Path,
         start_sec: float,
         end_sec: float,
+        vertical_mode: str = "none",
+        ass_subtitle_path: Optional[Path] = None,
         register_process: Optional[Callable[[asyncio.subprocess.Process], None]] = None
     ) -> None:
         """
         Memotong video secara akurat pada titik waktu frame yang tepat.
-        
-        Mengapa re-encode (bukan -c copy)?
-        Stream copy (-c copy) hanya dapat memotong pada keyframe (I-frame) terdekat.
-        Jika pengguna ingin memotong di detik 12.5 dan keyframe terdekat di detik 10.0,
-        hasil klip akan meleset hingga 2.5 detik atau gambar mengalami freeze/desync.
-        
-        Dengan re-encode libx264 preset veryfast dan CRF 22, FFmpeg merender ulang
-        frame secara presisi frame-by-frame dengan kecepatan sangat tinggi dan
-        kualitas visual tetap terjaga.
+        Mendukung konversi format vertikal 9:16 (Latar Blur / Crop Tengah)
+        dan burn-in subtitle ASS secara sinkron dalam satu kali render.
         """
         duration = end_sec - start_sec
         if duration <= 0:
             raise ValueError("Durasi klip harus lebih besar dari 0 detik")
 
-        # Argumen aman dalam bentuk list
-        # -ss sebelum -i dan -t durasi menghasilkan pencarian cepat sekaligus decode akurat
         cmd = [
             str(FFMPEG_PATH),
             "-y",                        # Overwrite output jika ada
             "-ss", f"{start_sec:.3f}",   # Posisi mulai presisi milidetik
             "-t", f"{duration:.3f}",     # Durasi klip
             "-i", str(input_path),       # File input
+        ]
+
+        # Konfigurasi filter video (Vertikal 9:16 & Subtitle)
+        if vertical_mode == "blur":
+            fg_scale = "scale=1080:1920:force_original_aspect_ratio=decrease"
+            bg_scale = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:10"
+            fc = f"[0:v]split=2[bg][fg];[bg]{bg_scale}[blurred];[fg]{fg_scale}[scaled];[blurred][scaled]overlay=(W-w)/2:(H-h)/2[vcomp]"
+            if ass_subtitle_path and ass_subtitle_path.exists():
+                escaped_sub = cls._escape_filter_path(ass_subtitle_path)
+                fc += f";[vcomp]ass='{escaped_sub}'[outv]"
+            else:
+                fc += ";[vcomp]null[outv]"
+            cmd.extend(["-filter_complex", fc, "-map", "[outv]", "-map", "0:a?"])
+
+        elif vertical_mode == "crop":
+            fc = "[0:v]scale=-1:1920,crop=1080:1920[vcomp]"
+            if ass_subtitle_path and ass_subtitle_path.exists():
+                escaped_sub = cls._escape_filter_path(ass_subtitle_path)
+                fc += f";[vcomp]ass='{escaped_sub}'[outv]"
+            else:
+                fc += ";[vcomp]null[outv]"
+            cmd.extend(["-filter_complex", fc, "-map", "[outv]", "-map", "0:a?"])
+
+        else:
+            # Rasio asli
+            if ass_subtitle_path and ass_subtitle_path.exists():
+                escaped_sub = cls._escape_filter_path(ass_subtitle_path)
+                cmd.extend(["-vf", f"ass='{escaped_sub}'"])
+
+        cmd.extend([
             "-c:v", "libx264",           # Re-encode H.264
             "-preset", "veryfast",       # Cepat dan hemat CPU
             "-crf", "22",                # Kualitas visual seimbang
             "-c:a", "aac",               # Audio AAC kompatibel luas
             "-b:a", "192k",              # Bitrate audio jernih
             "-avoid_negative_ts", "make_zero",
-            "-movflags", "+faststart",   # Memungkinkan video langsung di-stream di browser
+            "-movflags", "+faststart",   # Fast start streaming web
             str(output_path)
-        ]
+        ])
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -145,6 +175,7 @@ class FFmpegService:
         if proc.returncode != 0:
             err_msg = stderr.decode(errors="replace")
             raise RuntimeError(f"FFmpeg gagal memotong klip: {err_msg}")
+
 
     @classmethod
     async def extract_audio_for_whisper(

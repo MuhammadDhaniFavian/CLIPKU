@@ -19,7 +19,11 @@ import {
   Award,
   ChevronDown,
   ChevronUp,
-  Layers
+  Layers,
+  FolderOpen,
+  Smartphone,
+  FileText,
+  Type
 } from 'lucide-react';
 import type {
   VideoMetadata,
@@ -30,7 +34,9 @@ import type {
   TranscriptionResult,
   TranscriptSegment,
   MomentCandidate,
-  CandidateStatus
+  CandidateStatus,
+  VerticalMode,
+  SubtitleStyle
 } from './types';
 
 export default function App() {
@@ -76,9 +82,13 @@ export default function App() {
   const [targetClipsCount, setTargetClipsCount] = useState<number>(5);
   const [expandedBreakdownId, setExpandedBreakdownId] = useState<string | null>(null);
 
-  // State Klip
+  // State Klip & Format Fase 5
   const [clips, setClips] = useState<ClipRange[]>([]);
   const [splitDuration, setSplitDuration] = useState<number>(30);
+  const [selectedVerticalMode, setSelectedVerticalMode] = useState<VerticalMode>('blur');
+  const [selectedSubtitleStyle, setSelectedSubtitleStyle] = useState<SubtitleStyle>('tiktok_yellow');
+  const [isOpeningFolder, setIsOpeningFolder] = useState<boolean>(false);
+  const [folderOpenMessage, setFolderOpenMessage] = useState<string | null>(null);
 
   // State Job
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -442,6 +452,9 @@ export default function App() {
         body: JSON.stringify({
           video_id: videoId,
           clips: clips,
+          vertical_mode: selectedVerticalMode,
+          burn_subtitles: selectedSubtitleStyle !== 'none',
+          subtitle_style: selectedSubtitleStyle,
         }),
       });
 
@@ -461,6 +474,27 @@ export default function App() {
       });
     } catch (err: any) {
       setErrorMessage(err.message || 'Gagal memproses klip.');
+    }
+  };
+
+  // Buka folder output di Windows Explorer
+  const handleOpenOutputFolder = async () => {
+    setIsOpeningFolder(true);
+    setFolderOpenMessage(null);
+    try {
+      const res = await fetch('/api/open-output-folder', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setFolderOpenMessage(data.message || 'Folder output berhasil dibuka di Explorer.');
+        setTimeout(() => setFolderOpenMessage(null), 4000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setErrorMessage(err.detail || 'Gagal membuka folder output.');
+      }
+    } catch (err) {
+      setErrorMessage('Koneksi backend gagal saat membuka folder output.');
+    } finally {
+      setIsOpeningFolder(false);
     }
   };
 
@@ -1042,6 +1076,105 @@ export default function App() {
               </div>
             </div>
 
+            {/* Panel Pilihan Format Vertikal & Subtitle (Fase 5) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl bg-zinc-950/40 border border-zinc-800/80">
+              {/* Opsi 1: Aspek Rasio & Format Vertikal */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-300">
+                  <Smartphone className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Format Video (Aspek Rasio)</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedVerticalMode('blur')}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      selectedVerticalMode === 'blur'
+                        ? 'bg-purple-950/40 border-purple-500 text-white shadow-sm'
+                        : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="font-medium text-xs text-zinc-200">9:16 Blur</div>
+                    <div className="text-[10px] text-zinc-400 mt-1">Latar blur (TikTok/Shorts)</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedVerticalMode('crop')}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      selectedVerticalMode === 'crop'
+                        ? 'bg-purple-950/40 border-purple-500 text-white shadow-sm'
+                        : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="font-medium text-xs text-zinc-200">9:16 Crop</div>
+                    <div className="text-[10px] text-zinc-400 mt-1">Potong sisi tengah</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedVerticalMode('none')}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      selectedVerticalMode === 'none'
+                        ? 'bg-purple-950/40 border-purple-500 text-white shadow-sm'
+                        : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="font-medium text-xs text-zinc-200">Rasio Asli</div>
+                    <div className="text-[10px] text-zinc-400 mt-1">Tanpa konversi</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Opsi 2: Gaya Subtitle Burn-In */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-300">
+                  <Type className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Subtitle Otomatis (Burn-in)</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSubtitleStyle('tiktok_yellow')}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      selectedSubtitleStyle === 'tiktok_yellow'
+                        ? 'bg-amber-950/40 border-amber-500 text-white shadow-sm'
+                        : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="font-medium text-xs text-amber-300">Kuning TikTok</div>
+                    <div className="text-[10px] text-zinc-400 mt-1">Font tebal + border hitam</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSubtitleStyle('clean_white')}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      selectedSubtitleStyle === 'clean_white'
+                        ? 'bg-zinc-800 border-zinc-400 text-white shadow-sm'
+                        : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="font-medium text-xs text-zinc-200">Putih Bersih</div>
+                    <div className="text-[10px] text-zinc-400 mt-1">Minimalis modern</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSubtitleStyle('none')}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      selectedSubtitleStyle === 'none'
+                        ? 'bg-zinc-800 border-purple-500 text-white shadow-sm'
+                        : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="font-medium text-xs text-zinc-200">Tanpa Subtitle</div>
+                    <div className="text-[10px] text-zinc-400 mt-1">Hanya video murni</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {/* List Klip */}
             <div className="space-y-3">
               {clips.map((clip: ClipRange, index: number) => (
@@ -1202,12 +1335,31 @@ export default function App() {
         {/* Section 6: Hasil Klip & Preview Player */}
         {completedClips.length > 0 && (
           <section className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur space-y-5">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-              <h2 className="text-base font-semibold text-zinc-200">
-                Hasil Klip MP4 ({completedClips.length} Klip Siap)
-              </h2>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                <h2 className="text-base font-semibold text-zinc-200">
+                  Hasil Klip MP4 ({completedClips.length} Klip Siap)
+                </h2>
+              </div>
+
+              {/* Tombol Buka Folder Output di Windows Explorer */}
+              <button
+                onClick={handleOpenOutputFolder}
+                disabled={isOpeningFolder}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium cursor-pointer transition-all"
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-purple-400" />
+                <span>{isOpeningFolder ? 'Membuka...' : 'Buka Folder Hasil di Laptop'}</span>
+              </button>
             </div>
+
+            {folderOpenMessage && (
+              <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-800/40 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{folderOpenMessage}</span>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {completedClips.map((clip: ClipInfo, idx: number) => (
@@ -1215,20 +1367,40 @@ export default function App() {
                   key={idx}
                   className="p-4 rounded-xl bg-zinc-950/80 border border-zinc-800/80 space-y-3 flex flex-col justify-between"
                 >
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-semibold text-sm text-zinc-200">{clip.title}</h3>
-                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 font-mono">
-                        {clip.duration} detik
+                  <div className="space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="font-semibold text-sm text-zinc-200 line-clamp-1">{clip.title}</h3>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 font-mono shrink-0">
+                        {clip.duration}s
                       </span>
                     </div>
-                    <p className="text-xs text-zinc-500 truncate" title={clip.filename}>
-                      {clip.filename}
-                    </p>
+
+                    {/* Format & Subtitle Badges */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-md font-medium ${
+                        clip.is_vertical
+                          ? 'bg-purple-950/60 border border-purple-800/50 text-purple-300'
+                          : 'bg-zinc-800 text-zinc-400'
+                      }`}>
+                        {clip.is_vertical ? '📱 9:16 Vertikal' : '⬛ Rasio Asli'}
+                      </span>
+
+                      {clip.has_subtitles && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-md font-medium bg-amber-950/60 border border-amber-800/50 text-amber-300 flex items-center gap-1">
+                          <Type className="w-2.5 h-2.5" /> Subtitle Burn-In
+                        </span>
+                      )}
+
+                      <span className="text-[10px] text-zinc-500 font-mono ml-auto">
+                        {clip.file_size_mb} MB
+                      </span>
+                    </div>
                   </div>
 
                   {/* HTML5 Video Player Preview */}
-                  <div className="rounded-lg overflow-hidden bg-black border border-zinc-800 aspect-video flex items-center justify-center">
+                  <div className={`rounded-lg overflow-hidden bg-black border border-zinc-800 flex items-center justify-center ${
+                    clip.is_vertical ? 'aspect-[9/16] max-w-[240px] mx-auto w-full my-2' : 'aspect-video w-full my-2'
+                  }`}>
                     <video
                       controls
                       preload="metadata"
@@ -1239,8 +1411,20 @@ export default function App() {
                     </video>
                   </div>
 
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-xs text-zinc-400">{clip.file_size_mb} MB</span>
+                  {/* Action Buttons: Unduh MP4 & Unduh SRT */}
+                  <div className="flex items-center justify-end gap-2 pt-1 border-t border-zinc-900">
+                    {clip.srt_filename && (
+                      <a
+                        href={`/api/clips/${clip.filename}/subtitles`}
+                        download={clip.srt_filename}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-300 hover:text-white transition-all text-xs font-medium cursor-pointer"
+                        title="Unduh file subtitle teks .SRT"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Unduh SRT</span>
+                      </a>
+                    )}
+
                     <a
                       href={`/api/clips/${clip.filename}`}
                       download={clip.filename}

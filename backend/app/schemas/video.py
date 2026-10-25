@@ -30,11 +30,26 @@ class VideoMetadata(BaseModel):
     audio_codec: Optional[str] = None
 
 
+class VerticalMode(str, Enum):
+    """Mode konversi rasio aspek video."""
+    BLUR = "blur"   # 1080x1920 dengan latar belakang blur (rekomendasi)
+    CROP = "crop"   # 1080x1920 dengan crop tengah
+    NONE = "none"   # Mempertahankan rasio aspek asli
+
+
+class SubtitleStyle(str, Enum):
+    """Gaya tampilan subtitle burn-in."""
+    TIKTOK_YELLOW = "tiktok_yellow"  # Kuning cerah dengan outline hitam tebal
+    CLEAN_WHITE = "clean_white"      # Putih bersih dengan outline hitam
+    NONE = "none"                    # Tanpa burn-in subtitle
+
+
 class ClipRange(BaseModel):
     """Rentang waktu untuk satu klip."""
     start: float = Field(ge=0, description="Detik mulai")
     end: float = Field(gt=0, description="Detik selesai")
     title: Optional[str] = None
+    custom_subtitle: Optional[str] = None
 
     @field_validator("end")
     @classmethod
@@ -48,6 +63,9 @@ class CutRequest(BaseModel):
     """Permintaan pemotongan video menjadi klip-klip."""
     video_id: str
     clips: list[ClipRange] = Field(min_length=1, max_length=20)
+    vertical_mode: VerticalMode = VerticalMode.BLUR
+    burn_subtitles: bool = True
+    subtitle_style: SubtitleStyle = SubtitleStyle.TIKTOK_YELLOW
 
 
 class ClipInfo(BaseModel):
@@ -58,6 +76,10 @@ class ClipInfo(BaseModel):
     end: float
     duration: float
     file_size_mb: float
+    is_vertical: bool = False
+    has_subtitles: bool = False
+    srt_filename: Optional[str] = None
+
 
 
 class WordTimestamp(BaseModel):

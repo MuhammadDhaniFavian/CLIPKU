@@ -165,3 +165,4 @@ async def run_fase4_tests():
 
 if __name__ == "__main__":
     asyncio.run(run_fase4_tests())
+
