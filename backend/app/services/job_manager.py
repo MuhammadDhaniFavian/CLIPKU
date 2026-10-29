@@ -127,6 +127,7 @@ class JobManager:
             output_clips: List[ClipInfo] = []
             total_clips = len(clips)
             is_vertical = (vertical_mode in ["blur", "crop"])
+            is_square = (vertical_mode == "square")
 
             try:
                 for idx, clip in enumerate(clips):
@@ -137,12 +138,19 @@ class JobManager:
                     status_text = f"Memproses klip {clip_num} dari {total_clips}"
                     if is_vertical:
                         status_text += " [9:16 Vertikal]"
+                    elif is_square:
+                        status_text += " [1:1 Kotak]"
                     if burn_subtitles and subtitle_style != "none":
                         status_text += " [Burn-in Subtitle]"
                     job.message = f"{status_text} ({clip.start:.1f}s - {clip.end:.1f}s)..."
 
                     clean_name = input_path.stem
-                    suffix = "_9x16" if is_vertical else ""
+                    if is_vertical:
+                        suffix = "_9x16"
+                    elif is_square:
+                        suffix = "_1x1"
+                    else:
+                        suffix = ""
                     clip_filename = f"{clean_name}_clip_{clip_num}_{int(clip.start)}s_{int(clip.end)}s{suffix}.mp4"
                     output_path = OUTPUT_DIR / clip_filename
                     self.created_files[job_id].append(output_path)
@@ -158,7 +166,8 @@ class JobManager:
                             clip_end=clip.end,
                             style=subtitle_style,
                             is_vertical=is_vertical,
-                            custom_text=clip.custom_subtitle
+                            custom_text=clip.custom_subtitle,
+                            is_square=is_square
                         )
 
                         # Tulis ASS hanya jika ada konten subtitle (ada kata terdeteksi)
@@ -214,6 +223,7 @@ class JobManager:
                             duration=duration,
                             file_size_mb=size_mb,
                             is_vertical=is_vertical,
+                            format_mode=vertical_mode,
                             has_subtitles=(ass_path is not None),
                             srt_filename=srt_filename
                         )

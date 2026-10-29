@@ -123,10 +123,21 @@ class FFmpegService:
             "-i", str(input_path),       # File input
         ]
 
-        # Konfigurasi filter video (Vertikal 9:16 & Subtitle)
+        # Konfigurasi filter video (Vertikal 9:16, Kotak 1:1 & Subtitle)
         if vertical_mode == "blur":
             fg_scale = "scale=1080:1920:force_original_aspect_ratio=decrease"
             bg_scale = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:10"
+            fc = f"[0:v]split=2[bg][fg];[bg]{bg_scale}[blurred];[fg]{fg_scale}[scaled];[blurred][scaled]overlay=(W-w)/2:(H-h)/2[vcomp]"
+            if ass_subtitle_path and ass_subtitle_path.exists():
+                escaped_sub = cls._escape_filter_path(ass_subtitle_path)
+                fc += f";[vcomp]ass='{escaped_sub}'[outv]"
+            else:
+                fc += ";[vcomp]null[outv]"
+            cmd.extend(["-filter_complex", fc, "-map", "[outv]", "-map", "0:a?"])
+
+        elif vertical_mode == "square":
+            fg_scale = "scale=1080:1080:force_original_aspect_ratio=decrease"
+            bg_scale = "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080,boxblur=25:10"
             fc = f"[0:v]split=2[bg][fg];[bg]{bg_scale}[blurred];[fg]{fg_scale}[scaled];[blurred][scaled]overlay=(W-w)/2:(H-h)/2[vcomp]"
             if ass_subtitle_path and ass_subtitle_path.exists():
                 escaped_sub = cls._escape_filter_path(ass_subtitle_path)

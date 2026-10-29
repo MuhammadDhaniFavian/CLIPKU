@@ -32,9 +32,10 @@ class VideoMetadata(BaseModel):
 
 class VerticalMode(str, Enum):
     """Mode konversi rasio aspek video."""
-    BLUR = "blur"   # 1080x1920 dengan latar belakang blur (rekomendasi)
-    CROP = "crop"   # 1080x1920 dengan crop tengah
-    NONE = "none"   # Mempertahankan rasio aspek asli
+    BLUR = "blur"      # 1080x1920 (9:16) dengan latar belakang blur (TikTok / Reels / Shorts)
+    CROP = "crop"      # 1080x1920 (9:16) dengan crop tengah
+    SQUARE = "square"  # 1080x1080 (1:1) dengan latar belakang blur (Instagram Feed)
+    NONE = "none"      # Mempertahankan rasio aspek asli (Lanskap / YouTube)
 
 
 class SubtitleStyle(str, Enum):
@@ -77,6 +78,7 @@ class ClipInfo(BaseModel):
     duration: float
     file_size_mb: float
     is_vertical: bool = False
+    format_mode: str = "none"
     has_subtitles: bool = False
     srt_filename: Optional[str] = None
 
@@ -178,6 +180,11 @@ class UpdateCandidateRequest(BaseModel):
     start: Optional[float] = None
     end: Optional[float] = None
     judul: Optional[str] = None
+
+
+class ExportZipRequest(BaseModel):
+    """Permintaan pengunduhan batch klip dalam satu file ZIP."""
+    clip_filenames: list[str] = Field(min_length=1, description="Daftar nama file klip untuk dimasukkan ke dalam arsip ZIP")
 
 
 

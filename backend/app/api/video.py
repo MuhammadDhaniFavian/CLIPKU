@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
@@ -39,7 +40,8 @@ from app.schemas.video import (
     ScoreBreakdown,
     MomentCandidate,
     AnalyzeMomentsRequest,
-    UpdateCandidateRequest
+    UpdateCandidateRequest,
+    ExportZipRequest
 )
 from app.services.ffmpeg_service import FFmpegService
 from app.services.job_manager import job_manager
@@ -338,6 +340,53 @@ async def open_output_folder():
             return {"message": f"Folder output berada di: {folder_str}", "folder_path": folder_str}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal membuka folder output: {str(e)}")
+
+
+@router.post("/clips/export-zip")
+async def export_clips_zip(req: ExportZipRequest):
+    """
+    Mengemas daftar klip MP4 terpilih beserta file subtitle SRT pendampingnya
+    ke dalam satu file arsip ZIP untuk diunduh langsung secara batch.
+    """
+    if not req.clip_filenames:
+        raise HTTPException(status_code=400, detail="Daftar file klip tidak boleh kosong.")
+
+    zip_id = uuid.uuid4().hex[:8]
+    zip_path = TEMP_DIR / f"CliperKu_Clips_{zip_id}.zip"
+
+    files_added = 0
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for raw_name in req.clip_filenames:
+                safe_name = Path(raw_name).name
+                mp4_file = OUTPUT_DIR / safe_name
+
+                if mp4_file.exists() and mp4_file.is_file():
+                    zf.write(mp4_file, arcname=safe_name)
+                    files_added += 1
+
+                    # Tambahkan file SRT pendamping jika ada
+                    srt_name = Path(safe_name).stem + ".srt"
+                    srt_file = OUTPUT_DIR / srt_name
+                    if srt_file.exists() and srt_file.is_file():
+                        zf.write(srt_file, arcname=srt_name)
+
+        if files_added == 0:
+            if zip_path.exists():
+                zip_path.unlink()
+            raise HTTPException(status_code=404, detail="Tidak ada file klip valid yang ditemukan di folder output.")
+
+        return FileResponse(
+            path=zip_path,
+            media_type="application/zip",
+            filename=f"CliperKu_Clips_{zip_id}.zip"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        if zip_path.exists():
+            zip_path.unlink()
+        raise HTTPException(status_code=500, detail=f"Gagal membuat arsip ZIP: {str(e)}")
 
 
 

@@ -41,18 +41,24 @@ class SubtitleService:
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
     @classmethod
-    def create_ass_header(cls, style: str = "tiktok_yellow", is_vertical: bool = True) -> str:
+    def create_ass_header(cls, style: str = "tiktok_yellow", is_vertical: bool = True, is_square: bool = False) -> str:
         """
         Membuat header file ASS dengan styling profesional.
         Style tiktok_yellow: teks kuning tebal, outline hitam tebal, shadow.
         Style clean_white: teks putih bersih, outline hitam halus.
         """
-        res_x = 1080 if is_vertical else 1280
-        res_y = 1920 if is_vertical else 720
-
-        # Margin bawah: untuk 9:16 diangkat setinggi 300px agar tidak tertutup tombol TikTok
-        margin_v = 300 if is_vertical else 50
-        font_size = 56 if is_vertical else 38
+        if is_vertical:
+            res_x, res_y = 1080, 1920
+            margin_v = 300  # Margin bawah diangkat setinggi 300px agar tidak tertutup UI TikTok
+            font_size = 56
+        elif is_square:
+            res_x, res_y = 1080, 1080
+            margin_v = 120  # Margin bawah untuk tampilan 1:1 Feed
+            font_size = 46
+        else:
+            res_x, res_y = 1280, 720
+            margin_v = 50
+            font_size = 38
 
         if style == "clean_white":
             primary_color = "&H00FFFFFF"  # White
@@ -90,7 +96,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         clip_end: float,
         style: str = "tiktok_yellow",
         is_vertical: bool = True,
-        custom_text: Optional[str] = None
+        custom_text: Optional[str] = None,
+        is_square: bool = False
     ) -> Tuple[str, str]:
         """
         Menghasilkan konten subtitle ASS dan SRT untuk rentang klip tertentu.
@@ -122,7 +129,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 events_srt.append(f"{srt_counter}\n{srt_start} --> {srt_end}\n{line}\n")
                 srt_counter += 1
 
-            ass_full = cls.create_ass_header(style, is_vertical) + "\n".join(events_ass)
+            ass_full = cls.create_ass_header(style, is_vertical, is_square) + "\n".join(events_ass)
             srt_full = "\n".join(events_srt)
             return ass_full, srt_full
 
@@ -179,7 +186,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             srt_counter += 1
             i += len(chunk)
 
-        ass_full = cls.create_ass_header(style, is_vertical) + "\n".join(events_ass)
+        ass_full = cls.create_ass_header(style, is_vertical, is_square) + "\n".join(events_ass)
         srt_full = "\n".join(events_srt)
         return ass_full, srt_full
 

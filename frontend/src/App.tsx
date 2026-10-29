@@ -23,7 +23,8 @@ import {
   FolderOpen,
   Smartphone,
   FileText,
-  Type
+  Type,
+  Archive
 } from 'lucide-react';
 import type {
   VideoMetadata,
@@ -495,6 +496,56 @@ export default function App() {
       setErrorMessage('Koneksi backend gagal saat membuka folder output.');
     } finally {
       setIsOpeningFolder(false);
+    }
+  };
+
+  // Unduh Semua Klip Sekaligus sebagai Arsip ZIP
+  const [isDownloadingZip, setIsDownloadingZip] = useState<boolean>(false);
+
+  const handleDownloadZip = async () => {
+    if (completedClips.length === 0) return;
+    setIsDownloadingZip(true);
+    setErrorMessage(null);
+    try {
+      const clipNames = completedClips.map((c) => c.filename);
+      const res = await fetch('/api/clips/export-zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clip_filenames: clipNames })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Gagal mengekspor file ZIP.');
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `CliperKu_Semua_Klip_${Date.now()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Gagal mengunduh arsip ZIP.');
+    } finally {
+      setIsDownloadingZip(false);
+    }
+  };
+
+  // Terapkan Preset Format Platform 1-Klik
+  const applyPreset = (preset: 'tiktok' | 'instagram' | 'youtube') => {
+    if (preset === 'tiktok') {
+      setSelectedVerticalMode('blur');
+      setSelectedSubtitleStyle('tiktok_yellow');
+    } else if (preset === 'instagram') {
+      setSelectedVerticalMode('square');
+      setSelectedSubtitleStyle('clean_white');
+    } else if (preset === 'youtube') {
+      setSelectedVerticalMode('none');
+      setSelectedSubtitleStyle('clean_white');
     }
   };
 
@@ -1076,7 +1127,50 @@ export default function App() {
               </div>
             </div>
 
-            {/* Panel Pilihan Format Vertikal & Subtitle (Fase 5) */}
+            {/* Preset Cepat Platform (1-Klik) */}
+            <div className="flex items-center justify-between flex-wrap gap-2.5 p-3 rounded-xl bg-purple-950/20 border border-purple-900/40">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-300">
+                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                <span>Preset Cepat Platform:</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                <button
+                  type="button"
+                  onClick={() => applyPreset('tiktok')}
+                  className={`px-3 py-1.5 rounded-lg font-medium border transition-all cursor-pointer flex items-center gap-1.5 ${
+                    selectedVerticalMode === 'blur' && selectedSubtitleStyle === 'tiktok_yellow'
+                      ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
+                      : 'bg-zinc-900/80 text-zinc-300 border-zinc-700 hover:border-zinc-500'
+                  }`}
+                >
+                  <span>📱 TikTok / Reels / Shorts (9:16)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyPreset('instagram')}
+                  className={`px-3 py-1.5 rounded-lg font-medium border transition-all cursor-pointer flex items-center gap-1.5 ${
+                    selectedVerticalMode === 'square' && selectedSubtitleStyle === 'clean_white'
+                      ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
+                      : 'bg-zinc-900/80 text-zinc-300 border-zinc-700 hover:border-zinc-500'
+                  }`}
+                >
+                  <span>⬛ Feed Kotak (1:1)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyPreset('youtube')}
+                  className={`px-3 py-1.5 rounded-lg font-medium border transition-all cursor-pointer flex items-center gap-1.5 ${
+                    selectedVerticalMode === 'none' && selectedSubtitleStyle === 'clean_white'
+                      ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
+                      : 'bg-zinc-900/80 text-zinc-300 border-zinc-700 hover:border-zinc-500'
+                  }`}
+                >
+                  <span>🖥️ YouTube / Lanskap</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Panel Pilihan Format Vertikal & Subtitle */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl bg-zinc-950/40 border border-zinc-800/80">
               {/* Opsi 1: Aspek Rasio & Format Vertikal */}
               <div className="space-y-2">
@@ -1084,7 +1178,7 @@ export default function App() {
                   <Smartphone className="w-3.5 h-3.5 text-purple-400" />
                   <span>Format Video (Aspek Rasio)</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                   <button
                     type="button"
                     onClick={() => setSelectedVerticalMode('blur')}
@@ -1095,7 +1189,7 @@ export default function App() {
                     }`}
                   >
                     <div className="font-medium text-xs text-zinc-200">9:16 Blur</div>
-                    <div className="text-[10px] text-zinc-400 mt-1">Latar blur (TikTok/Shorts)</div>
+                    <div className="text-[10px] text-zinc-400 mt-1">Latar blur (Shorts)</div>
                   </button>
 
                   <button
@@ -1108,7 +1202,20 @@ export default function App() {
                     }`}
                   >
                     <div className="font-medium text-xs text-zinc-200">9:16 Crop</div>
-                    <div className="text-[10px] text-zinc-400 mt-1">Potong sisi tengah</div>
+                    <div className="text-[10px] text-zinc-400 mt-1">Potong sisi</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedVerticalMode('square')}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      selectedVerticalMode === 'square'
+                        ? 'bg-purple-950/40 border-purple-500 text-white shadow-sm'
+                        : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="font-medium text-xs text-zinc-200">1:1 Kotak</div>
+                    <div className="text-[10px] text-zinc-400 mt-1">Latar blur (Feed IG)</div>
                   </button>
 
                   <button
@@ -1343,15 +1450,28 @@ export default function App() {
                 </h2>
               </div>
 
-              {/* Tombol Buka Folder Output di Windows Explorer */}
-              <button
-                onClick={handleOpenOutputFolder}
-                disabled={isOpeningFolder}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium cursor-pointer transition-all"
-              >
-                <FolderOpen className="w-3.5 h-3.5 text-purple-400" />
-                <span>{isOpeningFolder ? 'Membuka...' : 'Buka Folder Hasil di Laptop'}</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Tombol Unduh Semua Klip sebagai ZIP */}
+                <button
+                  onClick={handleDownloadZip}
+                  disabled={isDownloadingZip}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium cursor-pointer transition-all shadow-sm disabled:opacity-50"
+                  title="Unduh seluruh klip MP4 beserta subtitle SRT ke dalam 1 file ZIP"
+                >
+                  <Archive className="w-3.5 h-3.5" />
+                  <span>{isDownloadingZip ? 'Mengemas ZIP...' : 'Unduh Semua (.ZIP)'}</span>
+                </button>
+
+                {/* Tombol Buka Folder Output di Windows Explorer */}
+                <button
+                  onClick={handleOpenOutputFolder}
+                  disabled={isOpeningFolder}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium cursor-pointer transition-all"
+                >
+                  <FolderOpen className="w-3.5 h-3.5 text-purple-400" />
+                  <span>{isOpeningFolder ? 'Membuka...' : 'Buka Folder Hasil di Laptop'}</span>
+                </button>
+              </div>
             </div>
 
             {folderOpenMessage && (
@@ -1378,11 +1498,17 @@ export default function App() {
                     {/* Format & Subtitle Badges */}
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className={`text-[10px] px-2 py-0.5 rounded-md font-medium ${
-                        clip.is_vertical
+                        clip.format_mode === 'square'
+                          ? 'bg-blue-950/60 border border-blue-800/50 text-blue-300'
+                          : clip.is_vertical
                           ? 'bg-purple-950/60 border border-purple-800/50 text-purple-300'
                           : 'bg-zinc-800 text-zinc-400'
                       }`}>
-                        {clip.is_vertical ? '📱 9:16 Vertikal' : '⬛ Rasio Asli'}
+                        {clip.format_mode === 'square'
+                          ? '⬛ 1:1 Kotak'
+                          : clip.is_vertical
+                          ? '📱 9:16 Vertikal'
+                          : '🖥️ Rasio Asli'}
                       </span>
 
                       {clip.has_subtitles && (
@@ -1399,7 +1525,11 @@ export default function App() {
 
                   {/* HTML5 Video Player Preview */}
                   <div className={`rounded-lg overflow-hidden bg-black border border-zinc-800 flex items-center justify-center ${
-                    clip.is_vertical ? 'aspect-[9/16] max-w-[240px] mx-auto w-full my-2' : 'aspect-video w-full my-2'
+                    clip.format_mode === 'square'
+                      ? 'aspect-square max-w-[280px] mx-auto w-full my-2'
+                      : clip.is_vertical
+                      ? 'aspect-[9/16] max-w-[240px] mx-auto w-full my-2'
+                      : 'aspect-video w-full my-2'
                   }`}>
                     <video
                       controls

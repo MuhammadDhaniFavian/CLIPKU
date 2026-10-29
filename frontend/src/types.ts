@@ -10,7 +10,7 @@ export interface VideoMetadata {
   audio_codec?: string;
 }
 
-export type VerticalMode = 'blur' | 'crop' | 'none';
+export type VerticalMode = 'blur' | 'crop' | 'square' | 'none';
 export type SubtitleStyle = 'tiktok_yellow' | 'clean_white' | 'none';
 
 export interface ClipRange {
@@ -28,6 +28,7 @@ export interface ClipInfo {
   duration: number;
   file_size_mb: number;
   is_vertical?: boolean;
+  format_mode?: string;
   has_subtitles?: boolean;
   srt_filename?: string;
 }
