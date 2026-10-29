@@ -3,17 +3,18 @@ CliperKu - Router API Video & Job Pemotongan.
 Keamanan:
 - Validasi ekstensi dan tipe file
 - Streaming upload chunk-by-chunk untuk efisiensi RAM
-- Batas ukuran file 500 MB (dapat diubah via config)
+- Batas ukuran file 2 GB (dapat diubah via config)
 - Mencegah arbitrary path traversal (hanya file di dalam TEMP_DIR yang diproses)
 """
 
 import asyncio
+import json
 import os
 import shutil
 import uuid
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse
 import aiofiles
 
@@ -380,7 +381,6 @@ async def get_video_transcript(video_id: str):
             detail="Transkrip belum tersedia untuk video ini. Jalankan proses transkripsi terlebih dahulu."
         )
 
-    import json
     with open(transcript_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -415,7 +415,6 @@ async def analyze_video_moments(video_id: str, req: Optional[AnalyzeMomentsReque
             detail="Transkrip ucapan belum tersedia. Harap jalankan proses transkripsi terlebih dahulu."
         )
 
-    import json
     with open(transcript_file, "r", encoding="utf-8") as f:
         trans_data = json.load(f)
 
@@ -452,7 +451,6 @@ async def get_video_moments(video_id: str):
             detail="Analisis momen belum dilakukan untuk video ini."
         )
 
-    import json
     with open(moments_cache_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -472,7 +470,6 @@ async def update_moment_candidate(
     if not moments_cache_file.exists():
         raise HTTPException(status_code=404, detail="File kandidat momen tidak ditemukan.")
 
-    import json
     with open(moments_cache_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 

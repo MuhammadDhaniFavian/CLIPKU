@@ -161,13 +161,13 @@ class JobManager:
                             custom_text=clip.custom_subtitle
                         )
 
-                        if ass_content:
+                        # Tulis ASS hanya jika ada konten subtitle (ada kata terdeteksi)
+                        if ass_content and srt_content:
                             ass_path = TEMP_DIR / f"{clean_name}_clip_{clip_num}.ass"
                             with open(ass_path, "w", encoding="utf-8") as f:
                                 f.write(ass_content)
                             self.created_files[job_id].append(ass_path)
 
-                        if srt_content:
                             srt_filename = f"{clean_name}_clip_{clip_num}_{int(clip.start)}s_{int(clip.end)}s{suffix}.srt"
                             srt_path = OUTPUT_DIR / srt_filename
                             with open(srt_path, "w", encoding="utf-8") as f:
@@ -323,7 +323,6 @@ class JobManager:
 
                 # Simpan metadata transkrip ke JSON file (untuk cache dan endpoint transcript)
                 transcript_cache_file = TEMP_DIR / f"{video_id}_transcript.json"
-                import json
                 with open(transcript_cache_file, "w", encoding="utf-8") as f:
                     f.write(result.model_dump_json(indent=2))
 
