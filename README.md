@@ -87,3 +87,4 @@ Seluruh komponen telah diuji dan terverifikasi 100% lolos:
 - **Backend**: Python 3.13, FastAPI, Uvicorn, Faster-Whisper, FFmpeg (GPL build lokal).
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Lucide Icons.
 - **Sistem Penyimpanan**: Berkas lokal (tidak membutuhkan instalasi basis data eksternal).
+"# CLIPKU" 
